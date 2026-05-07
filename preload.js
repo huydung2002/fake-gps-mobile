@@ -12,7 +12,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize:        () => ipcRenderer.send('win-maximize'),
     close:           () => ipcRenderer.send('win-close'),
     onInstallProgress: (cb) => ipcRenderer.on('install-progress', (_, data) => cb(data)),
-    amdsCheck:       () => ipcRenderer.invoke('amds-check'),
-    amdsStop:        () => ipcRenderer.invoke('amds-stop'),
-    amdsStart:       () => ipcRenderer.invoke('amds-start'),
 });

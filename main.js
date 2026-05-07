@@ -379,44 +379,7 @@ async function resetLocation(udid) {
     return { ok: false };
 }
 
-// ─── AMDS Service helpers ──────────────────────────────────────────────────
-const AMDS_SERVICE_NAME = 'Apple Mobile Device Service';
 
-async function amdsCheck() {
-    try {
-        const { stdout } = await execAsync(`sc query "${AMDS_SERVICE_NAME}"`, { timeout: 5000 });
-        if (stdout.includes('RUNNING')) return { running: true };
-        if (stdout.includes('STOPPED')) return { running: false };
-        return { running: null }; // unknown
-    } catch (e) {
-        return { running: null, error: e.message };
-    }
-}
-
-async function amdsStop() {
-    try {
-        const { stdout, stderr } = await execAsync(`net stop "${AMDS_SERVICE_NAME}"`, { timeout: 15000 });
-        logDebug(`AMDS stop: ${stdout || stderr}`);
-        return { ok: true };
-    } catch (e) {
-        logDebug(`AMDS stop error: ${e.message}`);
-        // Có thể đã dừng rồi
-        if (e.message.includes('not started') || e.message.includes('1062')) return { ok: true };
-        return { ok: false, error: 'Cần quyền Administrator để dừng service. Chạy app bằng Run as Administrator.' };
-    }
-}
-
-async function amdsStart() {
-    try {
-        const { stdout, stderr } = await execAsync(`net start "${AMDS_SERVICE_NAME}"`, { timeout: 15000 });
-        logDebug(`AMDS start: ${stdout || stderr}`);
-        return { ok: true };
-    } catch (e) {
-        logDebug(`AMDS start error: ${e.message}`);
-        if (e.message.includes('already been started') || e.message.includes('1056')) return { ok: true };
-        return { ok: false, error: e.message };
-    }
-}
 
 // ─── IPC handlers ──────────────────────────────────────────────────────────
 ipcMain.handle('install-tool', async () => {
@@ -446,21 +409,6 @@ ipcMain.handle('get-devices', async () => {
 ipcMain.handle('set-location', async (_, { lat, lng, udid }) => {
     try {
         const result = await setLocation(lat, lng, udid);
-        // Nếu lỗi 183 (AMDS conflict), tự động thử khởi động lại AMDS (restart) rồi retry
-        if (!result.ok && result.error && result.error.includes('AMDS') && !result.amdsRetried) {
-            logDebug('Phát hiện lỗi AMDS 183, tự động khởi động lại service (restart) và thử lại...');
-            const stopResult = await amdsStop();
-            if (stopResult.ok) {
-                await new Promise(r => setTimeout(r, 2000)); // Chờ service dừng hẳn
-                await amdsStart(); // CẦN PHẢI BẬT LẠI SERVICE
-                await new Promise(r => setTimeout(r, 5000)); // Chờ nhận diện lại thiết bị
-                const retry = await setLocation(lat, lng, udid);
-                retry.amdsRetried = true;
-                return retry;
-            } else {
-                return { ok: false, error: stopResult.error || result.error };
-            }
-        }
         return result;
     } catch (e) {
         return { ok: false, error: e.message };
@@ -475,17 +423,7 @@ ipcMain.handle('reset-location', async (_, { udid }) => {
     }
 });
 
-ipcMain.handle('amds-check', async () => {
-    return await amdsCheck();
-});
 
-ipcMain.handle('amds-stop', async () => {
-    return await amdsStop();
-});
-
-ipcMain.handle('amds-start', async () => {
-    return await amdsStart();
-});
 
 
 ipcMain.handle('open-url', async (_, url) => {
