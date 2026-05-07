@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iOS GPS Spoofer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Title bar -->
+    <div id="titlebar">
+        <div id="titlebar-left">
+            <div id="app-icon">📍</div>
+            <span id="app-title">iOS GPS Spoofer</span>
+        </div>
+        <div id="titlebar-drag"></div>
+        <div id="titlebar-controls">
+            <button id="btn-min" title="Thu nhỏ">─</button>
+            <button id="btn-max" title="Phóng to">□</button>
+            <button id="btn-close" title="Đóng">✕</button>
+        </div>
+    </div>
+
+    <!-- Main layout -->
+    <div id="layout">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <!-- Device section -->
+            <section class="panel" id="panel-device">
+                <div class="panel-header">
+                    <span class="panel-icon">📱</span>
+                    <span class="panel-title">Thiết bị</span>
+                    <button id="btn-refresh" class="icon-btn" title="Làm mới">↻</button>
+                </div>
+                <div id="device-status" class="status-row">
+                    <div class="status-dot dot-waiting" id="device-dot"></div>
+                    <span id="device-label">Đang tìm thiết bị...</span>
+                </div>
+                <select id="device-select" class="select-box hidden">
+                    <option value="">-- Chọn thiết bị --</option>
+                </select>
+                <div id="tool-status" class="tool-badge tool-waiting">
+                    Kiểm tra công cụ...
+                </div>
+                <button id="btn-install" class="btn-install hidden">
+                    ⬇ Cài pymobiledevice3 tự động
+                </button>
+                <div id="install-log" class="install-log hidden"></div>
+            </section>
+
+            <!-- AMDS Service control -->
+            <section class="panel" id="panel-amds">
+                <div class="panel-header">
+                    <span class="panel-icon">⚙️</span>
+                    <span class="panel-title">Apple Device Service</span>
+                </div>
+                <div id="amds-status" class="status-row">
+                    <div class="status-dot dot-waiting" id="amds-dot"></div>
+                    <span id="amds-label">Đang kiểm tra...</span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:8px">
+                    <button id="btn-amds-stop" class="btn-secondary" style="flex:1;font-size:12px;padding:7px 4px">
+                        🛑 Tắt Service
+                    </button>
+                    <button id="btn-amds-start" class="btn-secondary" style="flex:1;font-size:12px;padding:7px 4px">
+                        ▶ Bật lại
+                    </button>
+                </div>
+                <div style="font-size:10px;color:var(--text-muted);margin-top:6px;line-height:1.4">
+                    ⚠️ Tắt service trước khi Dịch chuyển nếu bị lỗi MuxException 183
+                </div>
+            </section>
+
+            <!-- Selected location -->
+            <section class="panel" id="panel-location">
+                <div class="panel-header">
+                    <span class="panel-icon">🎯</span>
+                    <span class="panel-title">Vị trí đã chọn</span>
+                </div>
+                <div id="coord-display">
+                    <div class="coord-row">
+                        <span class="coord-lbl">Vĩ độ</span>
+                        <span class="coord-val" id="disp-lat">—</span>
+                    </div>
+                    <div class="coord-row">
+                        <span class="coord-lbl">Kinh độ</span>
+                        <span class="coord-val" id="disp-lng">—</span>
+                    </div>
+                    <div class="coord-row" id="place-row" style="display:none">
+                        <span class="coord-lbl">Địa điểm</span>
+                        <span class="coord-val" id="disp-place"
+                            style="font-size:11px;white-space:normal;line-height:1.4">—</span>
+                    </div>
+                </div>
+
+                <button id="btn-teleport" class="btn-primary" disabled>
+                    <span class="btn-icon">🚀</span> Dịch chuyển
+                </button>
+                <button id="btn-reset" class="btn-secondary">
+                    <span class="btn-icon">🔄</span> Đặt lại vị trí thật
+                </button>
+            </section>
+
+            <!-- History -->
+            <section class="panel" id="panel-history">
+                <div class="panel-header">
+                    <span class="panel-icon">🕐</span>
+                    <span class="panel-title">Lịch sử</span>
+                    <button id="btn-clear-history" class="icon-btn" title="Xóa lịch sử">✕</button>
+                </div>
+                <div id="history-list">
+                    <div class="empty-hint">Chưa có lịch sử</div>
+                </div>
+            </section>
+
+            <!-- Setup guide -->
+            <section class="panel panel-guide" id="panel-guide">
+                <div class="panel-header">
+                    <span class="panel-icon">⚙️</span>
+                    <span class="panel-title">Hướng dẫn cài đặt</span>
+                </div>
+                <div class="guide-steps">
+                    <div class="guide-step">
+                        <span class="step-num">1</span>
+                        <div>
+                            <div class="step-title">Cài libimobiledevice</div>
+                            <button class="link-btn"
+                                onclick="openUrl('https://github.com/libimobiledevice/libimobiledevice')">Tải về
+                                →</button>
+                        </div>
+                    </div>
+                    <div class="guide-step">
+                        <span class="step-num">2</span>
+                        <div>
+                            <div class="step-title">Hoặc cài Python + pymobiledevice3</div>
+
+                            <code class="inline-code">pip install pymobiledevice3</code>
+                            <div class="step-title">Mở cmd -> Run as Administrator -> gõ lệnh "pnpm start"</div>
+                        </div>
+                    </div>
+                    <div class="guide-step">
+                        <span class="step-num">3</span>
+                        <div>
+                            <div class="step-title">Cắm iPhone, tin tưởng máy tính</div>
+                        </div>
+                    </div>
+                    <div class="guide-step">
+                        <span class="step-num">4</span>
+                        <div>
+                            <div class="step-title">iOS 16+: Bật Developer Mode</div>
+                            <span class="step-sub">Cài đặt → Quyền riêng tư → Developer Mode</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </aside>
+
+        <!-- Map container -->
+        <div id="map-container">
+            <div id="map"></div>
+            <!-- Overlay status -->
+            <div id="map-overlay" class="hidden">
+                <div id="overlay-content">
+                    <div class="overlay-spinner"></div>
+                    <div id="overlay-text">Đang dịch chuyển...</div>
+                </div>
+            </div>
+            <!-- Search bar -->
+            <div id="search-bar">
+                <input type="text" id="search-input" placeholder="🔍 Tìm địa điểm tại Việt Nam..." autocomplete="off">
+                <div id="search-results" class="hidden"></div>
+            </div>
+            <!-- Map tip -->
+            <div id="map-tip">Click vào bản đồ để chọn vị trí</div>
+            <!-- Toast -->
+            <div id="toast"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
