@@ -244,62 +244,9 @@ document.getElementById('device-select').addEventListener('change', e => {
 document.getElementById('btn-refresh').onclick = () => {
     refreshDevices();
     checkTool();
-    refreshAmds();
 };
 
-// ─── AMDS Management ──────────────────────────────────────────────────────
-async function refreshAmds() {
-    const dot = document.getElementById('amds-dot');
-    const label = document.getElementById('amds-label');
-    const { running, error } = await electronAPI.amdsCheck();
 
-    if (error) {
-        dot.className = 'status-dot dot-error';
-        label.textContent = 'Không kiểm tra được';
-        return;
-    }
-
-    if (running) {
-        dot.className = 'status-dot dot-ok';
-        label.textContent = 'Đang chạy (Có thể gây lỗi 183)';
-    } else if (running === false) {
-        dot.className = 'status-dot dot-waiting';
-        label.textContent = 'Đã tắt (Sẵn sàng spoof)';
-    } else {
-        dot.className = 'status-dot dot-waiting';
-        label.textContent = 'Không rõ trạng thái';
-    }
-}
-
-document.getElementById('btn-amds-stop').onclick = async () => {
-    const btn = document.getElementById('btn-amds-stop');
-    btn.disabled = true;
-    btn.textContent = '⏳ Đang tắt...';
-    const res = await electronAPI.amdsStop();
-    if (res.ok) {
-        showToast('✅ Đã tắt AMDS thành công', 'success');
-        refreshAmds();
-    } else {
-        showToast('❌ Lỗi: ' + res.error, 'error');
-    }
-    btn.textContent = '🛑 Tắt Service';
-    btn.disabled = false;
-};
-
-document.getElementById('btn-amds-start').onclick = async () => {
-    const btn = document.getElementById('btn-amds-start');
-    btn.disabled = true;
-    btn.textContent = '⏳ Đang bật...';
-    const res = await electronAPI.amdsStart();
-    if (res.ok) {
-        showToast('✅ Đã bật AMDS thành công', 'success');
-        refreshAmds();
-    } else {
-        showToast('❌ Lỗi: ' + res.error, 'error');
-    }
-    btn.textContent = '▶ Bật lại';
-    btn.disabled = false;
-};
 
 // ─── Teleport ─────────────────────────────────────────────────────────────
 document.getElementById('btn-teleport').onclick = async () => {
@@ -309,12 +256,7 @@ document.getElementById('btn-teleport').onclick = async () => {
     hideOverlay();
 
     if (result.ok) {
-        if (result.amdsWasStopped) {
-            showToast('✅ Đã tự động tắt AMDS và dịch chuyển thành công!', 'success');
-            refreshAmds();
-        } else {
-            showToast('✅ Đã dịch chuyển thành công!', 'success');
-        }
+        showToast('✅ Đã dịch chuyển thành công!', 'success');
         addHistory(selectedLat, selectedLng, selectedPlace);
     } else {
         if (result.error === 'no_tool') {
@@ -415,11 +357,10 @@ window.openUrl = openUrl;
 async function init() {
     initMap();
     renderHistory();
-    await Promise.all([refreshDevices(), checkTool(), refreshAmds()]);
+    await Promise.all([refreshDevices(), checkTool()]);
     // Auto-refresh devices every 5s
     setInterval(() => {
         refreshDevices();
-        refreshAmds();
     }, 5000);
 }
 
