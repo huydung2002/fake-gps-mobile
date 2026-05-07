@@ -446,14 +446,16 @@ ipcMain.handle('get-devices', async () => {
 ipcMain.handle('set-location', async (_, { lat, lng, udid }) => {
     try {
         const result = await setLocation(lat, lng, udid);
-        // Nếu lỗi 183 (AMDS conflict), tự động thử dừng AMDS rồi retry
-        if (!result.ok && result.error && result.error.includes('AMDS')) {
-            logDebug('Phát hiện lỗi AMDS 183, tự động dừng service và thử lại...');
+        // Nếu lỗi 183 (AMDS conflict), tự động thử khởi động lại AMDS (restart) rồi retry
+        if (!result.ok && result.error && result.error.includes('AMDS') && !result.amdsRetried) {
+            logDebug('Phát hiện lỗi AMDS 183, tự động khởi động lại service (restart) và thử lại...');
             const stopResult = await amdsStop();
             if (stopResult.ok) {
                 await new Promise(r => setTimeout(r, 2000)); // Chờ service dừng hẳn
+                await amdsStart(); // CẦN PHẢI BẬT LẠI SERVICE
+                await new Promise(r => setTimeout(r, 5000)); // Chờ nhận diện lại thiết bị
                 const retry = await setLocation(lat, lng, udid);
-                retry.amdsWasStopped = true;
+                retry.amdsRetried = true;
                 return retry;
             } else {
                 return { ok: false, error: stopResult.error || result.error };
