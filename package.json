@@ -17,9 +17,9 @@
   },
   "build": {
     "appId": "com.bravehoang.iosgpsspoof",
-    "productName": "iOS GPS Spoofer",
+    "productName": "IOS GPS by BraveHoang",
     "directories": {
-      "output": "release"
+      "output": "build"
     },
     "files": [
       "main.js",

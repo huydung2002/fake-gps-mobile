@@ -40,7 +40,7 @@ Build file chạy sẵn:
 npm run dist
 ```
 
-Sau khi build xong, file nằm trong thư mục `release`:
+Sau khi build xong, file nằm trong thư mục `build`:
 
 - `iOS GPS Spoofer-1.0.0-portable.exe` (chạy thẳng, không cần cài đặt)
 - `iOS GPS Spoofer Setup 1.0.0.exe` (bản cài đặt)
