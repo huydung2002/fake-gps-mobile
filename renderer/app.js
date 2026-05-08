@@ -7,6 +7,26 @@ let selectedLat = null, selectedLng = null;
 let selectedPlace = '';
 let currentUdid = '';
 let history = JSON.parse(localStorage.getItem('bh-gps-history') || '[]');
+let isTeleporting = false;
+let deviceRefreshTimer = null;
+
+function normalizeUserError(errorText) {
+    const text = String(errorText || '');
+    const lower = text.toLowerCase();
+    if (lower.includes('requires admin privileges') || lower.includes('administrator')) {
+        return 'Cần chạy app bằng Run as Administrator.';
+    }
+    if (lower.includes('device is not connected') || lower.includes('không thấy iphone online')) {
+        return 'iPhone chưa kết nối ổn định. Mở khóa máy, bấm Trust rồi cắm lại USB.';
+    }
+    if (lower.includes('connection was terminated abruptly')) {
+        return 'Kết nối với iPhone bị ngắt đột ngột. Giữ máy mở khóa và thử lại.';
+    }
+    if (lower.includes('mux 183') || lower.includes("number': 183") || lower.includes('number: 183')) {
+        return 'Lỗi ghép cặp iPhone (Mux 183). Chạy app bằng Administrator và bấm Trust lại trên iPhone.';
+    }
+    return text || 'Không rõ lỗi';
+}
 
 // ─── Map init ─────────────────────────────────────────────────────────────
 function initMap() {
@@ -157,6 +177,7 @@ document.addEventListener('click', e => {
 
 // ─── Device detection ─────────────────────────────────────────────────────
 async function refreshDevices() {
+    if (isTeleporting) return;
     const dot = document.getElementById('device-dot');
     const label = document.getElementById('device-label');
     const sel = document.getElementById('device-select');
@@ -242,6 +263,7 @@ document.getElementById('device-select').addEventListener('change', e => {
 });
 
 document.getElementById('btn-refresh').onclick = () => {
+    if (isTeleporting) return;
     refreshDevices();
     checkTool();
 };
@@ -250,7 +272,10 @@ document.getElementById('btn-refresh').onclick = () => {
 
 // ─── Teleport ─────────────────────────────────────────────────────────────
 document.getElementById('btn-teleport').onclick = async () => {
-    if (selectedLat === null) return;
+    if (selectedLat === null || isTeleporting) return;
+    isTeleporting = true;
+    document.getElementById('btn-teleport').disabled = true;
+    document.getElementById('btn-refresh').disabled = true;
     showOverlay('Đang dịch chuyển...');
     const result = await electronAPI.setLocation(selectedLat, selectedLng, currentUdid);
     hideOverlay();
@@ -262,9 +287,13 @@ document.getElementById('btn-teleport').onclick = async () => {
         if (result.error === 'no_tool') {
             showToast('❌ Chưa cài công cụ. Xem hướng dẫn bên trái.', 'error');
         } else {
-            showToast(`❌ Lỗi: ${result.error || 'Không rõ'}`, 'error');
+            showToast(`❌ Lỗi: ${normalizeUserError(result.error)}`, 'error');
         }
     }
+    isTeleporting = false;
+    document.getElementById('btn-teleport').disabled = false;
+    document.getElementById('btn-refresh').disabled = false;
+    refreshDevices();
 };
 
 document.getElementById('btn-reset').onclick = async () => {
@@ -359,7 +388,7 @@ async function init() {
     renderHistory();
     await Promise.all([refreshDevices(), checkTool()]);
     // Auto-refresh devices every 5s
-    setInterval(() => {
+    deviceRefreshTimer = setInterval(() => {
         refreshDevices();
     }, 5000);
 }
