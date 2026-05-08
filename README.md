@@ -22,6 +22,18 @@ Trên máy Windows cần có:
 git clone https://github.com/huydung2002/fake-gps-mobile.git
 cd fake-gps-mobile
 npm install
+
+file cài/chạy thì trên máy khác chạy đúng 4 lệnh này:
+
+git clone <repo-url>
+cd fake-gps-mobile
+npm install
+npm run dist
+Xong lấy file trong build/ là dùng được.
+
+Nếu bạn muốn build nhanh bản portable thôi (không cần setup), dùng:
+
+npm run dist -- --win portable
 ```
 
 ## 3) Chạy ứng dụng
@@ -42,8 +54,8 @@ npm run dist
 
 Sau khi build xong, file nằm trong thư mục `build`:
 
-- `iOS GPS Spoofer-1.0.0-portable.exe` (chạy thẳng, không cần cài đặt)
-- `iOS GPS Spoofer Setup 1.0.0.exe` (bản cài đặt)
+- `iOS GPS by BraveHoang.exe` (chạy thẳng, không cần cài đặt)
+- `iOS GPS by BraveHoang Setup 1.0.0.exe` (bản cài đặt)
 
 Nếu muốn build bản thư mục chưa nén (debug/phân phối nội bộ):
 
