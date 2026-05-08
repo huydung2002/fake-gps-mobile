@@ -4,12 +4,45 @@
   "description": "iOS GPS Location Spoofer via USB",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win portable nsis"
   },
   "keywords": [],
   "author": "BraveHoang",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^35.2.1"
+    "electron": "^35.2.1",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.bravehoang.iosgpsspoof",
+    "productName": "iOS GPS Spoofer",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true
+    }
   }
 }

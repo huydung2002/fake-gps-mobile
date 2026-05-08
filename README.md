@@ -32,6 +32,25 @@ npm start
 
 > Ứng dụng sẽ tự xử lý luồng quyền Admin/tunnel. Nếu Windows hỏi UAC thì chọn **Yes**.
 
+## 3.1) Đóng gói gửi cho người khác (Windows)
+
+Build file chạy sẵn:
+
+```bash
+npm run dist
+```
+
+Sau khi build xong, file nằm trong thư mục `release`:
+
+- `iOS GPS Spoofer-1.0.0-portable.exe` (chạy thẳng, không cần cài đặt)
+- `iOS GPS Spoofer Setup 1.0.0.exe` (bản cài đặt)
+
+Nếu muốn build bản thư mục chưa nén (debug/phân phối nội bộ):
+
+```bash
+npm run pack
+```
+
 ## 4) Cách dùng
 
 1. Cắm iPhone qua USB.
