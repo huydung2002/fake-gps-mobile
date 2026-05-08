@@ -15,6 +15,10 @@ let keepAliveInFlight = false;
 const KEEP_ALIVE_MS = 3000;
 let pinnedLocation = null;
 const PINNED_LOCATION_KEY = 'bh-pinned-location';
+const SPOOF_RADIUS_M = 45;
+const SPOOF_STEP_MIN_M = 2;
+const SPOOF_STEP_MAX_M = 8;
+const EARTH_METERS_PER_DEG_LAT = 111320;
 
 function normalizeUserError(errorText) {
     const text = String(errorText || '');
@@ -43,16 +47,85 @@ function stopLocationKeepAlive() {
     keepAliveFailureCount = 0;
 }
 
+function randomBetween(min, max) {
+    return min + Math.random() * (max - min);
+}
+
+function toRadians(deg) {
+    return (deg * Math.PI) / 180;
+}
+
+function metersToLat(meters) {
+    return meters / EARTH_METERS_PER_DEG_LAT;
+}
+
+function metersToLng(meters, atLat) {
+    const scale = Math.cos(toRadians(atLat));
+    if (Math.abs(scale) < 0.00001) return 0;
+    return meters / (EARTH_METERS_PER_DEG_LAT * scale);
+}
+
+function distanceMeters(lat1, lng1, lat2, lng2) {
+    const dLatM = (lat2 - lat1) * EARTH_METERS_PER_DEG_LAT;
+    const avgLat = (lat1 + lat2) / 2;
+    const dLngM = (lng2 - lng1) * EARTH_METERS_PER_DEG_LAT * Math.cos(toRadians(avgLat));
+    return Math.hypot(dLatM, dLngM);
+}
+
+function moveByMeters(lat, lng, dxMeters, dyMeters) {
+    return {
+        lat: lat + metersToLat(dyMeters),
+        lng: lng + metersToLng(dxMeters, lat),
+    };
+}
+
+function nextNaturalSpoofPoint(pinned) {
+    const centerLat = pinned.lat;
+    const centerLng = pinned.lng;
+    const currentLat = Number.isFinite(pinned.cursorLat) ? pinned.cursorLat : centerLat;
+    const currentLng = Number.isFinite(pinned.cursorLng) ? pinned.cursorLng : centerLng;
+
+    const angle = randomBetween(0, Math.PI * 2);
+    const step = randomBetween(SPOOF_STEP_MIN_M, SPOOF_STEP_MAX_M);
+    const dx = Math.cos(angle) * step;
+    const dy = Math.sin(angle) * step;
+    let next = moveByMeters(currentLat, currentLng, dx, dy);
+
+    const dist = distanceMeters(centerLat, centerLng, next.lat, next.lng);
+    if (dist > SPOOF_RADIUS_M) {
+        // Pull back toward anchor to keep movement realistic around target zone.
+        const backRatio = (dist - SPOOF_RADIUS_M * 0.6) / Math.max(dist, 1);
+        const pullDx = (centerLng - next.lng) * EARTH_METERS_PER_DEG_LAT * Math.cos(toRadians((centerLat + next.lat) / 2)) * backRatio;
+        const pullDy = (centerLat - next.lat) * EARTH_METERS_PER_DEG_LAT * backRatio;
+        next = moveByMeters(next.lat, next.lng, pullDx, pullDy);
+    }
+
+    return {
+        lat: +next.lat.toFixed(6),
+        lng: +next.lng.toFixed(6),
+    };
+}
+
 function startLocationKeepAlive(lat, lng, udid) {
-    pinnedLocation = { lat, lng, udid };
+    pinnedLocation = {
+        lat,
+        lng,
+        udid,
+        cursorLat: lat,
+        cursorLng: lng,
+    };
     localStorage.setItem(PINNED_LOCATION_KEY, JSON.stringify(pinnedLocation));
     stopLocationKeepAlive();
     keepAliveTimer = setInterval(async () => {
         if (!pinnedLocation || isTeleporting || keepAliveInFlight) return;
+        const nextPoint = nextNaturalSpoofPoint(pinnedLocation);
         keepAliveInFlight = true;
-        const result = await electronAPI.setLocation(pinnedLocation.lat, pinnedLocation.lng, pinnedLocation.udid);
+        const result = await electronAPI.setLocation(nextPoint.lat, nextPoint.lng, pinnedLocation.udid);
         keepAliveInFlight = false;
         if (result.ok) {
+            pinnedLocation.cursorLat = nextPoint.lat;
+            pinnedLocation.cursorLng = nextPoint.lng;
+            localStorage.setItem(PINNED_LOCATION_KEY, JSON.stringify(pinnedLocation));
             keepAliveFailureCount = 0;
             return;
         }
@@ -436,6 +509,8 @@ async function init() {
         const savedPinned = JSON.parse(localStorage.getItem(PINNED_LOCATION_KEY) || 'null');
         if (savedPinned && Number.isFinite(savedPinned.lat) && Number.isFinite(savedPinned.lng)) {
             if (savedPinned.udid) currentUdid = savedPinned.udid;
+            if (!Number.isFinite(savedPinned.cursorLat)) savedPinned.cursorLat = savedPinned.lat;
+            if (!Number.isFinite(savedPinned.cursorLng)) savedPinned.cursorLng = savedPinned.lng;
             startLocationKeepAlive(savedPinned.lat, savedPinned.lng, savedPinned.udid || currentUdid);
             showToast('🔒 Đang tự giữ vị trí ảo đã ghim trước đó.', 'info');
         }
