@@ -9,6 +9,12 @@ let currentUdid = '';
 let history = JSON.parse(localStorage.getItem('bh-gps-history') || '[]');
 let isTeleporting = false;
 let deviceRefreshTimer = null;
+let keepAliveTimer = null;
+let keepAliveFailureCount = 0;
+let keepAliveInFlight = false;
+const KEEP_ALIVE_MS = 3000;
+let pinnedLocation = null;
+const PINNED_LOCATION_KEY = 'bh-pinned-location';
 
 function normalizeUserError(errorText) {
     const text = String(errorText || '');
@@ -26,6 +32,35 @@ function normalizeUserError(errorText) {
         return 'Lỗi ghép cặp iPhone (Mux 183). Chạy app bằng Administrator và bấm Trust lại trên iPhone.';
     }
     return text || 'Không rõ lỗi';
+}
+
+function stopLocationKeepAlive() {
+    if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+    }
+    keepAliveInFlight = false;
+    keepAliveFailureCount = 0;
+}
+
+function startLocationKeepAlive(lat, lng, udid) {
+    pinnedLocation = { lat, lng, udid };
+    localStorage.setItem(PINNED_LOCATION_KEY, JSON.stringify(pinnedLocation));
+    stopLocationKeepAlive();
+    keepAliveTimer = setInterval(async () => {
+        if (!pinnedLocation || isTeleporting || keepAliveInFlight) return;
+        keepAliveInFlight = true;
+        const result = await electronAPI.setLocation(pinnedLocation.lat, pinnedLocation.lng, pinnedLocation.udid);
+        keepAliveInFlight = false;
+        if (result.ok) {
+            keepAliveFailureCount = 0;
+            return;
+        }
+        keepAliveFailureCount += 1;
+        if (keepAliveFailureCount === 3) {
+            showToast('⚠ Kết nối giữ vị trí ảo không ổn định, app đang tự thử lại.', 'error');
+        }
+    }, KEEP_ALIVE_MS);
 }
 
 // ─── Map init ─────────────────────────────────────────────────────────────
@@ -260,6 +295,10 @@ document.getElementById('btn-install').onclick = async () => {
 
 document.getElementById('device-select').addEventListener('change', e => {
     currentUdid = e.target.value;
+    if (pinnedLocation) {
+        pinnedLocation.udid = currentUdid;
+        localStorage.setItem(PINNED_LOCATION_KEY, JSON.stringify(pinnedLocation));
+    }
 });
 
 document.getElementById('btn-refresh').onclick = () => {
@@ -281,7 +320,8 @@ document.getElementById('btn-teleport').onclick = async () => {
     hideOverlay();
 
     if (result.ok) {
-        showToast('✅ Đã dịch chuyển thành công!', 'success');
+        startLocationKeepAlive(selectedLat, selectedLng, currentUdid);
+        showToast('✅ Đã dịch chuyển thành công (đang giữ vị trí ảo).', 'success');
         addHistory(selectedLat, selectedLng, selectedPlace);
     } else {
         if (result.error === 'no_tool') {
@@ -297,6 +337,9 @@ document.getElementById('btn-teleport').onclick = async () => {
 };
 
 document.getElementById('btn-reset').onclick = async () => {
+    stopLocationKeepAlive();
+    pinnedLocation = null;
+    localStorage.removeItem(PINNED_LOCATION_KEY);
     showOverlay('Đang đặt lại vị trí...');
     const result = await electronAPI.resetLocation(currentUdid);
     hideOverlay();
@@ -387,6 +430,17 @@ async function init() {
     initMap();
     renderHistory();
     await Promise.all([refreshDevices(), checkTool()]);
+
+    // Resume pinned fake location keep-alive if app was restarted.
+    try {
+        const savedPinned = JSON.parse(localStorage.getItem(PINNED_LOCATION_KEY) || 'null');
+        if (savedPinned && Number.isFinite(savedPinned.lat) && Number.isFinite(savedPinned.lng)) {
+            if (savedPinned.udid) currentUdid = savedPinned.udid;
+            startLocationKeepAlive(savedPinned.lat, savedPinned.lng, savedPinned.udid || currentUdid);
+            showToast('🔒 Đang tự giữ vị trí ảo đã ghim trước đó.', 'info');
+        }
+    } catch { }
+
     // Auto-refresh devices every 5s
     deviceRefreshTimer = setInterval(() => {
         refreshDevices();
