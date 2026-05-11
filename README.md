@@ -16,54 +16,51 @@ Trên máy Windows cần có:
    pip install -U pymobiledevice3
    ```
 
-## 2) Cài đặt project
+## 2) Cài đặt & Phát triển
+
+Nếu bạn muốn clone project về để phát triển hoặc tự build:
 
 ```bash
+# 1. Clone repository
 git clone https://github.com/huydung2002/fake-gps-mobile.git
 cd fake-gps-mobile
+
+# 2. Cài đặt các thư viện Node.js
 npm install
 
-file cài/chạy thì trên máy khác chạy đúng 4 lệnh này:
-
-git clone <repo-url>
-cd fake-gps-mobile
-npm install
-npm run dist
-Xong lấy file trong build/ là dùng được.
-
-Nếu bạn muốn build nhanh bản portable thôi (không cần setup), dùng:
-
-npm run dist -- --win portable
-```
-
-## 3) Chạy ứng dụng
-
-```bash
+# 3. Chạy ứng dụng ở chế độ development
 npm start
 ```
 
-> Ứng dụng sẽ tự xử lý luồng quyền Admin/tunnel. Nếu Windows hỏi UAC thì chọn **Yes**.
+## 3) Đóng gói ứng dụng (Build)
 
-## 3.1) Đóng gói gửi cho người khác (Windows)
-
-Build file chạy sẵn:
+Để tạo file cài đặt (`.exe`) cho Windows:
 
 ```bash
+# Build bản cài đặt (NSIS) và bản Portable
 npm run dist
+
+# Hoặc chỉ build bản Portable nhanh (không cần cài đặt)
+npm run dist -- --win portable
 ```
 
-Sau khi build xong, file nằm trong thư mục `build`:
+Sau khi build xong, sản phẩm sẽ nằm trong thư mục `build/`.
 
-- `iOS GPS by BraveHoang.exe` (chạy thẳng, không cần cài đặt)
-- `iOS GPS by BraveHoang Setup 1.0.0.exe` (bản cài đặt)
+## 4) Tạo bản phát hành trên GitHub (Dành cho Dev)
 
-Nếu muốn build bản thư mục chưa nén (debug/phân phối nội bộ):
+Để tự động đẩy bản build lên mục **Releases** trên GitHub:
 
-```bash
-npm run pack
-```
+1. Tạo một [GitHub Token (Classic)](https://github.com/settings/tokens) với quyền `repo`.
+2. Trong terminal (PowerShell), thiết lập token:
+   ```powershell
+   $env:GH_TOKEN = "your_github_token_here"
+   ```
+3. Chạy lệnh phát hành:
+   ```powershell
+   npm run dist -- --publish always
+   ```
 
-## 4) Cách dùng
+## 5) Cách dùng
 
 1. Cắm iPhone qua USB.
 2. Mở khóa iPhone và bấm **Trust this computer**.

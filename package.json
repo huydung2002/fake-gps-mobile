@@ -11,6 +11,10 @@
   "keywords": [],
   "author": "BraveHoang",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/huydung2002/fake-gps-mobile.git"
+  },
   "devDependencies": {
     "electron": "^35.2.1",
     "electron-builder": "^26.8.1"
@@ -21,6 +25,13 @@
     "directories": {
       "output": "build"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "huydung2002",
+        "repo": "fake-gps-mobile"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",
