@@ -463,11 +463,7 @@ async function reverseGeocode(lat, lng) {
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────
-// isComposing: true while user is typing with Vietnamese IME (Unikey etc.)
-// We must NOT search mid-composition or we get garbled queries.
 let searchTimer;
-let isComposing = false;
-
 const searchInput = document.getElementById('search-input');
 searchInput.addEventListener('input', e => {
     // Check native isComposing flag (handles most modern IMEs)
