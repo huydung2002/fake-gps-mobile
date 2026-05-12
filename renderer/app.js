@@ -469,26 +469,38 @@ let searchTimer;
 let isComposing = false;
 
 const searchInput = document.getElementById('search-input');
-searchInput.addEventListener('compositionstart', () => { isComposing = true; });
-searchInput.addEventListener('compositionend', e => {
-    isComposing = false;
-    // Trigger search after IME finalises the word
-    const q = e.target.value.trim();
-    if (q.length >= 2) {
-        clearTimeout(searchTimer);
-        searchTimer = setTimeout(() => doSearch(q), 300);
-    } else {
-        closeSearch();
-    }
-});
 searchInput.addEventListener('input', e => {
-    if (isComposing) return;   // wait for compositionend
+    // Check native isComposing flag (handles most modern IMEs)
+    if (e.isComposing) return;
+    
     clearTimeout(searchTimer);
     const q = e.target.value.trim();
-    if (q.length < 2) { closeSearch(); return; }
-    searchTimer = setTimeout(() => doSearch(q), 400);
+    
+    if (q.length < 2) { 
+        closeSearch(); 
+        return; 
+    }
+    
+    // Increased debounce to 600ms to give Vietnamese IMEs (Unikey/Telex) 
+    // more time to finalize characters if isComposing isn't perfectly reported.
+    searchTimer = setTimeout(() => {
+        if (searchInput.value.trim() === q) {
+            doSearch(q);
+        }
+    }, 600);
 });
-searchInput.addEventListener('keydown', e => { if (e.key === 'Escape') closeSearch(); });
+
+// Also trigger search on 'Enter' to finalize immediately
+searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+        const q = searchInput.value.trim();
+        if (q.length >= 2) {
+            clearTimeout(searchTimer);
+            doSearch(q);
+        }
+    }
+    if (e.key === 'Escape') closeSearch();
+});
 async function doSearch(q) {
     try {
         const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&accept-language=vi&countrycodes=vn`, { headers: { 'User-Agent': 'BraveHoang-GPS-Spoofer/1.0' } });
