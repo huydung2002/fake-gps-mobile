@@ -1,7 +1,7 @@
 {
-  "name": "ios-gps-spoofer",
-  "version": "1.0.0",
-  "description": "iOS GPS Location Spoofer via USB",
+  "name": "ios-gps-by-bravehoang",
+  "version": "1.0.1",
+  "description": "iOS GPS Location by BraveHoang",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
