@@ -20,6 +20,279 @@ const SPOOF_STEP_MIN_M = 2;
 const SPOOF_STEP_MAX_M = 8;
 const EARTH_METERS_PER_DEG_LAT = 111320;
 
+// Tunnel state (mirrored from main process)
+let tunnelStatus = { status: 'idle', host: null, port: null, udid: null, error: null };
+let tunnelSetupInProgress = false;
+let workerReady = false;
+
+// Wizard State
+let wizPythonOk = false;
+let wizPmdOk = false;
+let wizIphoneOk = false;
+
+// ─── Wizard Logic ────────────────────────────────────────────────────────────
+function setWizRow(id, state, desc, showBtn = false) { // state: 'ok' | 'err' | 'warn' | 'wait'
+    const row = document.getElementById(`req-${id}`);
+    const icon = document.getElementById(`req-${id}-icon`);
+    const descEl = document.getElementById(`req-${id}-desc`);
+    const btn = row.querySelector('.req-btn');
+
+    row.className = `req-row req-${state}`;
+    icon.textContent = state === 'ok' ? '✅' : state === 'err' ? '❌' : state === 'warn' ? '⚠️' : '⏳';
+    descEl.textContent = desc;
+
+    if (btn) {
+        if (showBtn) btn.classList.remove('hidden');
+        else btn.classList.add('hidden');
+    }
+}
+
+async function checkWizardRequirements() {
+    // 0. Check Admin
+    const isAdmin = await electronAPI.checkAdmin();
+    const adminWarn = document.getElementById('wizard-admin-warn');
+    if (isAdmin) adminWarn.classList.add('hidden');
+    else adminWarn.classList.remove('hidden');
+
+    // 1. Check Python
+    const { py } = await electronAPI.getPython();
+    if (py) {
+        wizPythonOk = true;
+        setWizRow('python', 'ok', `Đã tìm thấy Python: ${py}`);
+    } else {
+        wizPythonOk = false;
+        setWizRow('python', 'err', 'Chưa cài đặt Python hoặc chưa thêm vào PATH.', true);
+    }
+
+    // 2. Check pymobiledevice3
+    const { tool } = await electronAPI.detectTool();
+    if (tool && tool.startsWith('pymobiledevice3')) {
+        wizPmdOk = true;
+        setWizRow('pmd', 'ok', `Đã cài đặt công cụ (${tool})`);
+    } else {
+        wizPmdOk = false;
+        setWizRow('pmd', 'err', 'Chưa cài đặt thư viện pymobiledevice3.', wizPythonOk);
+    }
+
+    // 3. Check iPhone
+    const { ok, devices } = await electronAPI.getDevices();
+    const tips = document.getElementById('wizard-iphone-tips');
+    if (ok && devices && devices.length > 0) {
+        wizIphoneOk = true;
+        currentUdid = devices[0].udid; // default to first
+
+        // Build device list HTML
+        const listHtml = devices.map((d, i) => {
+            const shortUdid = d.udid.slice(0, 8) + '...' + d.udid.slice(-4);
+            const connBadge = d.connectionType === 'WiFi'
+                ? '<span class="conn-badge conn-wifi">📶 WiFi</span>'
+                : '<span class="conn-badge conn-usb">🔌 USB</span>';
+            return `<div class="wizard-device-item${i === 0 ? ' selected' : ''}" data-udid="${d.udid}" onclick="wizardSelectDevice(this,'${d.udid}')">
+                <div class="wizard-device-name">${d.name || 'iPhone'}</div>
+                <div class="wizard-device-meta">${connBadge}<span class="udid-tag">${shortUdid}</span></div>
+            </div>`;
+        }).join('');
+
+        setWizRow('iphone', 'ok', `${devices.length} thiết bị đã kết nối`);
+        const descEl = document.getElementById('req-iphone-desc');
+        descEl.innerHTML = `${devices.length} thiết bị đã kết nối — chọn thiết bị muốn dùng:`;
+        // Insert device list after desc
+        let devList = document.getElementById('wizard-device-list');
+        if (!devList) {
+            devList = document.createElement('div');
+            devList.id = 'wizard-device-list';
+            devList.className = 'wizard-device-list';
+            descEl.parentNode.insertBefore(devList, descEl.nextSibling);
+        }
+        devList.innerHTML = listHtml;
+        tips.classList.add('hidden');
+    } else {
+        wizIphoneOk = false;
+        setWizRow('iphone', 'warn', 'Vui lòng cắm iPhone vào máy tính.', true);
+        const devList = document.getElementById('wizard-device-list');
+        if (devList) devList.innerHTML = '';
+        tips.classList.remove('hidden');
+    }
+
+    // Update Continue Button
+    const btnCont = document.getElementById('btn-wizard-continue');
+    const hint = document.getElementById('wizard-continue-hint');
+    if (wizPythonOk && wizPmdOk) {
+        btnCont.disabled = false;
+        hint.classList.add('hidden');
+        // Auto-continue if everything is perfect
+        if (wizIphoneOk && !document.getElementById('wizard').classList.contains('hidden-by-user')) {
+            // wizardContinue(); // Optional: uncomment for fully silent start
+        }
+    } else {
+        btnCont.disabled = true;
+        hint.classList.remove('hidden');
+    }
+}
+
+async function wizardInstallPmd() {
+    const log = document.getElementById('pmd-install-log');
+    const progWrap = document.getElementById('pmd-progress-wrap');
+    const progBar = document.getElementById('pmd-progress-bar');
+    const btn = document.getElementById('btn-install-pmd');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Đang cài...';
+    log.classList.remove('hidden');
+    progWrap.classList.remove('hidden');
+    log.textContent = 'Bắt đầu cài đặt...\n';
+    progBar.style.width = '10%';
+
+    electronAPI.onInstallProgress((data) => {
+        log.textContent += data;
+        log.scrollTop = log.scrollHeight;
+        // Simple progress simulation based on log length
+        const p = Math.min(90, 10 + (log.textContent.length / 500) * 80);
+        progBar.style.width = `${p}%`;
+    });
+
+    const result = await electronAPI.installTool();
+    if (result.ok) {
+        progBar.style.width = '100%';
+        log.textContent += '\n✅ Cài đặt thành công!';
+        showToast('✅ Cài pymobiledevice3 thành công!', 'success');
+        setTimeout(checkWizardRequirements, 1000);
+    } else {
+        log.textContent += `\n❌ Lỗi: ${result.message || 'Không rõ'}`;
+        showToast('❌ Cài thất bại.', 'error');
+        btn.disabled = false;
+        btn.textContent = '↻ Thử lại';
+    }
+}
+
+function wizardInstallPython() {
+    electronAPI.openUrl('https://www.python.org/downloads/');
+    showToast('Hãy tải và cài đặt Python (nhớ tick "Add Python to PATH")', 'info');
+}
+
+function wizardRefreshIphone() {
+    checkWizardRequirements();
+}
+
+function wizardSelectDevice(el, udid) {
+    currentUdid = udid;
+    document.querySelectorAll('.wizard-device-item').forEach(e => e.classList.remove('selected'));
+    el.classList.add('selected');
+}
+window.wizardSelectDevice = wizardSelectDevice;
+
+function wizardContinue() {
+    document.getElementById('wizard').classList.add('hidden');
+    document.getElementById('connecting-page').classList.remove('hidden');
+    document.getElementById('layout').classList.add('hidden');
+
+    // Reset steps for connecting animation
+    setStepState('step-device', '');
+    setStepState('step-tunnel', '');
+    setStepState('step-worker', '');
+
+    // Start connection flow
+    startFullConnection();
+}
+
+function showWizard() {
+    // Hide other full-screen pages first
+    document.getElementById('connecting-page').classList.add('hidden');
+    document.getElementById('layout').classList.add('hidden');
+    document.getElementById('wizard').classList.remove('hidden');
+    document.getElementById('wizard').classList.remove('hidden-by-user');
+    checkWizardRequirements();
+}
+
+// ─── Setup Phase UI (Connecting Page) ─────────────────────────────────────────
+function setStepState(id, state) { // state: '' | 'step-active' | 'step-done'
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = `setup-step ${state}`;
+    const icon = el.querySelector('.step-icon');
+    if (icon) {
+        icon.textContent = state === 'step-done' ? '✓' : state === 'step-active' ? '⏳' : '○';
+    }
+}
+
+function revealLayout() {
+    document.getElementById('layout').classList.remove('hidden');
+    // Leaflet cannot measure tile bounds while container is display:none.
+    // Force a re-render after the element becomes visible.
+    requestAnimationFrame(() => {
+        if (map) map.invalidateSize();
+    });
+}
+
+function markSetupDone() {
+    const page = document.getElementById('connecting-page');
+    if (!page || page.classList.contains('hidden')) return;
+    document.getElementById('setup-title').textContent = '⚡ Sẵn sàng! Bấm bản đồ để dịch chuyển tức thì.';
+    page.classList.add('fading');
+    setTimeout(() => {
+        page.classList.add('hidden');
+        page.classList.remove('fading');
+        revealLayout();
+    }, 600);
+}
+
+function skipSetup() {
+    clearConnectingTimeout();
+    const page = document.getElementById('connecting-page');
+    if (page) {
+        page.classList.add('fading');
+        setTimeout(() => {
+            page.classList.add('hidden');
+            page.classList.remove('fading');
+            revealLayout();
+        }, 400);
+    }
+}
+window.skipSetup = skipSetup;
+
+// Auto-skip timer for connecting page
+let connectingTimeout = null;
+
+function clearConnectingTimeout() {
+    if (connectingTimeout) { clearTimeout(connectingTimeout); connectingTimeout = null; }
+}
+
+function startConnectingTimeout(ms = 45000) {
+    clearConnectingTimeout();
+    connectingTimeout = setTimeout(() => {
+        const page = document.getElementById('connecting-page');
+        if (page && !page.classList.contains('hidden')) {
+            document.getElementById('setup-hint').textContent =
+                'Kết nối mất quá lâu. Chuyển sang chế độ thường...';
+            setTimeout(skipSetup, 1500);
+        }
+    }, ms);
+}
+
+async function startFullConnection() {
+    setStepState('step-device', 'step-active');
+    const { ok, devices } = await electronAPI.getDevices();
+    if (ok && devices.length > 0) {
+        currentUdid = devices[0].udid;
+        setStepState('step-device', 'step-done');
+        setStepState('step-tunnel', 'step-active');
+        document.getElementById('setup-hint').textContent =
+            'Đang kết nối tunnel iOS... (lần đầu có thể mất 15–30 giây)';
+        // Auto-dismiss if tunnel takes too long
+        startConnectingTimeout(45000);
+        setupTunnel(currentUdid);
+    } else {
+        setStepState('step-device', '');
+        document.getElementById('setup-hint').textContent =
+            'Không tìm thấy iPhone. Kiểm tra cáp USB và Trust trên máy.';
+        showToast('Không tìm thấy thiết bị để kết nối.', 'error');
+        setTimeout(() => {
+            document.getElementById('connecting-page').classList.add('hidden');
+            showWizard();
+        }, 2500);
+    }
+}
+
 function normalizeUserError(errorText) {
     const text = String(errorText || '');
     const lower = text.toLowerCase();
@@ -93,7 +366,6 @@ function nextNaturalSpoofPoint(pinned) {
 
     const dist = distanceMeters(centerLat, centerLng, next.lat, next.lng);
     if (dist > SPOOF_RADIUS_M) {
-        // Pull back toward anchor to keep movement realistic around target zone.
         const backRatio = (dist - SPOOF_RADIUS_M * 0.6) / Math.max(dist, 1);
         const pullDx = (centerLng - next.lng) * EARTH_METERS_PER_DEG_LAT * Math.cos(toRadians((centerLat + next.lat) / 2)) * backRatio;
         const pullDy = (centerLat - next.lat) * EARTH_METERS_PER_DEG_LAT * backRatio;
@@ -107,13 +379,7 @@ function nextNaturalSpoofPoint(pinned) {
 }
 
 function startLocationKeepAlive(lat, lng, udid) {
-    pinnedLocation = {
-        lat,
-        lng,
-        udid,
-        cursorLat: lat,
-        cursorLng: lng,
-    };
+    pinnedLocation = { lat, lng, udid, cursorLat: lat, cursorLng: lng };
     localStorage.setItem(PINNED_LOCATION_KEY, JSON.stringify(pinnedLocation));
     stopLocationKeepAlive();
     keepAliveTimer = setInterval(async () => {
@@ -139,26 +405,16 @@ function startLocationKeepAlive(lat, lng, udid) {
 // ─── Map init ─────────────────────────────────────────────────────────────
 function initMap() {
     map = L.map('map', {
-        center: [16.047, 108.206], // Đà Nẵng (trung tâm Việt Nam)
+        center: [16.047, 108.206],
         zoom: 6,
         zoomControl: false,
         attributionControl: false,
     });
-
-    // OSM tile layer - chi tiết như Google Maps
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap',
-    }).addTo(map);
-
-    // Attribution nhỏ
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
     L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-    // Click handler
     map.on('click', onMapClick);
 
-    // Restore previous marker if any
     const saved = sessionStorage.getItem('bh-last-loc');
     if (saved) {
         try {
@@ -168,10 +424,8 @@ function initMap() {
     }
 }
 
-// ─── Click map ────────────────────────────────────────────────────────────
 function onMapClick(e) {
     selectLocation(e.latlng.lat, e.latlng.lng, '', true);
-    // Reverse geocode
     reverseGeocode(e.latlng.lat, e.latlng.lng);
 }
 
@@ -179,43 +433,24 @@ function selectLocation(lat, lng, place, fromClick) {
     selectedLat = +lat.toFixed(6);
     selectedLng = +lng.toFixed(6);
     selectedPlace = place || '';
-
-    // Update display
     document.getElementById('disp-lat').textContent = selectedLat.toFixed(6);
     document.getElementById('disp-lng').textContent = selectedLng.toFixed(6);
     document.getElementById('btn-teleport').disabled = false;
     document.getElementById('map-tip').style.opacity = '0';
 
-    // Marker
     if (selectedMarker) map.removeLayer(selectedMarker);
     const icon = L.divIcon({
         className: '',
-        html: `<div style="
-            width:24px;height:24px;border-radius:50%;
-            background:linear-gradient(135deg,#3b82f6,#6366f1);
-            border:3px solid #fff;
-            box-shadow:0 2px 12px rgba(59,130,246,.6);
-            position:relative;
-            display:flex;align-items:center;justify-content:center;
-        ">
-            <div class="marker-pulse"></div>
-        </div>`,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        html: `<div style="width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#6366f1);border:3px solid #fff;box-shadow:0 2px 12px rgba(59,130,246,.6);position:relative;display:flex;align-items:center;justify-content:center;"><div class="marker-pulse"></div></div>`,
+        iconSize: [24, 24], iconAnchor: [12, 12],
     });
     selectedMarker = L.marker([lat, lng], { icon }).addTo(map);
-
-    if (fromClick) {
-        sessionStorage.setItem('bh-last-loc', JSON.stringify({ lat, lng, place }));
-    }
+    if (fromClick) sessionStorage.setItem('bh-last-loc', JSON.stringify({ lat, lng, place }));
 }
 
 async function reverseGeocode(lat, lng) {
     try {
-        const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=vi`,
-            { headers: { 'User-Agent': 'BraveHoang-GPS-Spoofer/1.0' } }
-        );
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=vi`, { headers: { 'User-Agent': 'BraveHoang-GPS-Spoofer/1.0' } });
         const data = await res.json();
         const place = data.display_name || '';
         selectedPlace = place;
@@ -228,41 +463,43 @@ async function reverseGeocode(lat, lng) {
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────
+// isComposing: true while user is typing with Vietnamese IME (Unikey etc.)
+// We must NOT search mid-composition or we get garbled queries.
 let searchTimer;
-document.getElementById('search-input').addEventListener('input', e => {
+let isComposing = false;
+
+const searchInput = document.getElementById('search-input');
+searchInput.addEventListener('compositionstart', () => { isComposing = true; });
+searchInput.addEventListener('compositionend', e => {
+    isComposing = false;
+    // Trigger search after IME finalises the word
+    const q = e.target.value.trim();
+    if (q.length >= 2) {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => doSearch(q), 300);
+    } else {
+        closeSearch();
+    }
+});
+searchInput.addEventListener('input', e => {
+    if (isComposing) return;   // wait for compositionend
     clearTimeout(searchTimer);
     const q = e.target.value.trim();
-    if (q.length < 2) {
-        closeSearch();
-        return;
-    }
+    if (q.length < 2) { closeSearch(); return; }
     searchTimer = setTimeout(() => doSearch(q), 400);
 });
-
-document.getElementById('search-input').addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeSearch();
-});
-
+searchInput.addEventListener('keydown', e => { if (e.key === 'Escape') closeSearch(); });
 async function doSearch(q) {
     try {
-        const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&accept-language=vi&countrycodes=vn`,
-            { headers: { 'User-Agent': 'BraveHoang-GPS-Spoofer/1.0' } }
-        );
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&accept-language=vi&countrycodes=vn`, { headers: { 'User-Agent': 'BraveHoang-GPS-Spoofer/1.0' } });
         const data = await res.json();
         renderSearch(data);
     } catch { closeSearch(); }
 }
-
 function renderSearch(results) {
     const box = document.getElementById('search-results');
     if (!results.length) { box.classList.add('hidden'); return; }
-    box.innerHTML = results.map((r, i) => `
-        <div class="search-item" data-i="${i}">
-            <div>${r.display_name.split(',')[0]}</div>
-            <div class="search-item-sub">${r.display_name.split(',').slice(1, 3).join(',').trim()}</div>
-        </div>
-    `).join('');
+    box.innerHTML = results.map((r, i) => `<div class="search-item" data-i="${i}"><div>${r.display_name.split(',')[0]}</div><div class="search-item-sub">${r.display_name.split(',').slice(1, 3).join(',').trim()}</div></div>`).join('');
     box.classList.remove('hidden');
     results.forEach((r, i) => {
         box.querySelector(`[data-i="${i}"]`).onclick = () => {
@@ -274,252 +511,314 @@ function renderSearch(results) {
         };
     });
 }
+function closeSearch() { document.getElementById('search-results').classList.add('hidden'); }
+document.addEventListener('click', e => { if (!document.getElementById('search-bar').contains(e.target)) closeSearch(); });
 
-function closeSearch() {
-    document.getElementById('search-results').classList.add('hidden');
-}
-
-document.addEventListener('click', e => {
-    if (!document.getElementById('search-bar').contains(e.target)) closeSearch();
-});
-
-// ─── Device detection ─────────────────────────────────────────────────────
+// ─── Device detection ──────────────────────────────────────────────────────────
 async function refreshDevices() {
     if (isTeleporting) return;
     const dot = document.getElementById('device-dot');
     const label = document.getElementById('device-label');
     const sel = document.getElementById('device-select');
-
-    dot.className = 'status-dot dot-waiting';
-    label.textContent = 'Đang tìm thiết bị...';
-
     const { ok, devices } = await electronAPI.getDevices();
 
     if (!ok || !devices.length) {
         dot.className = 'status-dot dot-error';
-        label.textContent = 'Chưa kết nối thiết bị';
+        label.textContent = 'Chưa thấy iPhone';
         sel.classList.add('hidden');
+        document.getElementById('device-cards').innerHTML =
+            '<div class="device-empty">Chưa kết nối thiết bị nào</div>';
+        if (tunnelStatus.status === 'ready') {
+            tunnelStatus = { status: 'idle', host: null, port: null, udid: null, error: null };
+            updateTunnelBadge();
+        }
         return;
     }
 
     dot.className = 'status-dot dot-ok';
     label.textContent = `${devices.length} thiết bị`;
 
-    sel.innerHTML = devices.map(d =>
-        `<option value="${d.udid}">${d.name} — ${d.udid.slice(0, 8)}…</option>`
-    ).join('');
-    sel.classList.remove('hidden');
-    currentUdid = devices[0].udid;
+    // Build rich device cards
+    const cardsHtml = devices.map((d, i) => {
+        const shortUdid = d.udid.slice(0, 8) + '...' + d.udid.slice(-4);
+        const connLabel = d.connectionType === 'WiFi' ? '📶 WiFi' : '🔌 USB';
+        const connCls   = d.connectionType === 'WiFi' ? 'conn-wifi' : 'conn-usb';
+        const isActive  = d.udid === currentUdid || (i === 0 && !currentUdid);
+        return `<div class="device-card${isActive ? ' active' : ''}" data-udid="${d.udid}" id="dcard-${i}" onclick="selectDeviceCard('${d.udid}')">
+            <div class="device-card-name">${d.name || 'iPhone'}</div>
+            <div class="device-card-meta">
+                <span class="conn-badge ${connCls}">${connLabel}</span>
+                <span class="udid-tag" title="${d.udid}">${shortUdid}</span>
+            </div>
+        </div>`;
+    }).join('');
+    document.getElementById('device-cards').innerHTML = cardsHtml;
+
+    // Keep select in sync (hidden, but used by change listener)
+    sel.innerHTML = devices.map(d => `<option value="${d.udid}">${d.name}</option>`).join('');
+
+    const prevUdid = currentUdid;
+    if (!currentUdid || !devices.find(d => d.udid === currentUdid)) {
+        currentUdid = devices[0].udid;
+        sel.value = currentUdid;
+    }
+
+    if (prevUdid !== currentUdid || tunnelStatus.status === 'idle' || tunnelStatus.status === 'error') {
+        setupTunnel(currentUdid);
+    }
 }
 
-async function checkTool() {
-    const badge = document.getElementById('tool-status');
-    const btnInstall = document.getElementById('btn-install');
-    const { tool } = await electronAPI.detectTool();
-    if (tool) {
-        badge.className = 'tool-badge tool-ok';
-        badge.textContent = '✓ ' + tool;
-        btnInstall.classList.add('hidden');
-    } else {
-        badge.className = 'tool-badge tool-error';
-        badge.textContent = '✕ Chưa cài công cụ';
-        btnInstall.classList.remove('hidden');
-    }
-    return tool;
+function selectDeviceCard(udid) {
+    currentUdid = udid;
+    document.querySelectorAll('.device-card').forEach(c => c.classList.remove('active'));
+    const card = document.querySelector(`.device-card[data-udid="${udid}"]`);
+    if (card) card.classList.add('active');
+    document.getElementById('device-select').value = udid;
+    setupTunnel(udid);
 }
-
-// Install button
-document.getElementById('btn-install').onclick = async () => {
-    const btn = document.getElementById('btn-install');
-    const log = document.getElementById('install-log');
-    btn.disabled = true;
-    btn.textContent = '⏳ Đang cài...';
-    log.classList.remove('hidden');
-    log.textContent = '';
-
-    // Check Python first
-    const { py } = await electronAPI.getPython();
-    if (!py) {
-        log.textContent = '❌ Chưa cài Python!\nTải tại: https://python.org/downloads\nSau đó khởi động lại app.';
-        btn.textContent = '❌ Cần cài Python trước';
-        btn.disabled = false;
-        return;
-    }
-
-    log.textContent += `✓ Tìm thấy Python: ${py}\n`;
-    electronAPI.onInstallProgress((data) => {
-        log.textContent += data;
-        log.scrollTop = log.scrollHeight;
-    });
-
-    const result = await electronAPI.installTool();
-    if (result.ok) {
-        log.textContent += '\n✅ Cài thành công!';
-        showToast('✅ Cài pymobiledevice3 thành công!', 'success');
-        await checkTool();
-        await refreshDevices();
-    } else {
-        log.textContent += `\n❌ Lỗi: ${result.message || 'Không rõ'}`;
-        showToast('❌ Cài thất bại. Xem log bên dưới.', 'error');
-        btn.textContent = '↻ Thử lại';
-        btn.disabled = false;
-    }
-};
+window.selectDeviceCard = selectDeviceCard;
 
 document.getElementById('device-select').addEventListener('change', e => {
     currentUdid = e.target.value;
-    if (pinnedLocation) {
-        pinnedLocation.udid = currentUdid;
-        localStorage.setItem(PINNED_LOCATION_KEY, JSON.stringify(pinnedLocation));
-    }
+    setupTunnel(currentUdid);
 });
 
 document.getElementById('btn-refresh').onclick = () => {
-    if (isTeleporting) return;
     refreshDevices();
-    checkTool();
+    showToast('Đang làm mới danh sách...', 'info');
 };
 
+// ─── Persistent Tunnel ────────────────────────────────────────────────────
+function updateTunnelBadge() {
+    const badge = document.getElementById('tunnel-badge');
+    if (!badge) return;
+    const s = tunnelStatus.status;
+    if (s === 'ready') { badge.className = 'tunnel-badge tunnel-ready'; badge.textContent = '⚡ Tunnel sẵn sàng'; }
+    else if (s === 'connecting') { badge.className = 'tunnel-badge tunnel-connecting'; badge.textContent = '⏳ Đang kết nối tunnel...'; }
+    else if (s === 'error') { badge.className = 'tunnel-badge tunnel-error'; badge.textContent = '⚠ Tunnel lỗi'; }
+    else { badge.className = 'tunnel-badge tunnel-idle'; badge.textContent = '○ Tunnel chưa kết nối'; }
+}
 
+async function setupTunnel(udid) {
+    if (tunnelSetupInProgress || !udid) return;
+    // Skip if already ready for the same device
+    if (tunnelStatus.status === 'ready' && tunnelStatus.udid === udid) return;
+    tunnelSetupInProgress = true;
+    tunnelStatus = { ...tunnelStatus, status: 'connecting' };
+    updateTunnelBadge();
+    try {
+        const result = await electronAPI.setupTunnel(udid);
+        tunnelStatus = result.ok
+            ? { status: 'ready', host: result.host, port: result.port, udid, error: null }
+            : { status: 'error', host: null, port: null, udid, error: result.error };
+    } catch (e) {
+        tunnelStatus = { status: 'error', host: null, port: null, udid, error: e.message };
+    } finally {
+        tunnelSetupInProgress = false;
+        updateTunnelBadge();
+    }
+}
+
+electronAPI.onTunnelStatus((data) => {
+    tunnelStatus = data;
+    updateTunnelBadge();
+    if (data.status === 'ready') {
+        clearConnectingTimeout();
+        setStepState('step-tunnel', 'step-done');
+        setStepState('step-worker', 'step-active');
+        document.getElementById('setup-hint').textContent =
+            'Tunnel kết nối thành công! Đang khởi động worker dịch chuyển tức thì...';
+    } else if (data.status === 'error') {
+        setStepState('step-tunnel', '');
+        const page = document.getElementById('connecting-page');
+        if (page && !page.classList.contains('hidden')) {
+            const errMsg = data.error || 'Không rõ lỗi';
+            document.getElementById('setup-hint').textContent =
+                `Tunnel thất bại: ${errMsg.slice(0, 80)}. Chuyển sang chế độ thường...`;
+            clearConnectingTimeout();
+            setTimeout(skipSetup, 3000);
+        }
+    }
+});
+
+electronAPI.onWorkerReady(() => {
+    clearConnectingTimeout();
+    workerReady = true;
+    setStepState('step-worker', 'step-done');
+    markSetupDone();
+    updateTunnelBadge();
+    showToast('⚡ Chế độ tức thì đã sẵn sàng!', 'success');
+
+    // Fetch iPhone's real GPS location and center map on it
+    electronAPI.getIphoneLocation().then(result => {
+        if (result && result.ok && result.lat && result.lng) {
+            const lat = result.lat;
+            const lng = result.lng;
+            // Center map on iPhone's real location
+            if (map) map.setView([lat, lng], 15, { animate: true });
+            // Show a distinct "current iPhone location" marker
+            const iphoneIcon = L.divIcon({
+                className: '',
+                html: `<div style="
+                    width:18px;height:18px;border-radius:50%;
+                    background:rgba(59,130,246,0.25);
+                    border:3px solid #3b82f6;
+                    box-shadow:0 0 0 6px rgba(59,130,246,0.15);
+                    position:relative;
+                "><div style="
+                    position:absolute;inset:3px;border-radius:50%;
+                    background:#3b82f6;
+                "></div></div>`,
+                iconSize: [18, 18],
+                iconAnchor: [9, 9],
+            });
+            L.marker([lat, lng], { icon: iphoneIcon })
+                .bindTooltip('📱 Vị trí thực của iPhone', { permanent: false, direction: 'top' })
+                .addTo(map);
+            showToast(`📍 Vị trí iPhone: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'info');
+        }
+    }).catch(() => {
+        // get-location not supported or failed — no-op
+    });
+});
 
 // ─── Teleport ─────────────────────────────────────────────────────────────
 document.getElementById('btn-teleport').onclick = async () => {
-    if (selectedLat === null || isTeleporting) return;
+    if (selectedLat === null) return;
+
+    // INSTANT MODE: worker ready → fire-and-forget, no overlay
+    if (workerReady) {
+        startLocationKeepAlive(selectedLat, selectedLng, currentUdid);
+        addHistory(selectedLat, selectedLng, selectedPlace);
+        electronAPI.setLocation(selectedLat, selectedLng, currentUdid).then(result => {
+            if (result.ok) showToast('⚡ Đã dịch chuyển!', 'success');
+            else {
+                showToast(`❌ Lỗi: ${normalizeUserError(result.error)}`, 'error');
+                workerReady = false;
+                updateTunnelBadge();
+            }
+        });
+        return;
+    }
+
+    // SLOW PATH
+    if (isTeleporting) return;
     isTeleporting = true;
-    document.getElementById('btn-teleport').disabled = true;
-    document.getElementById('btn-refresh').disabled = true;
+    const btnTp = document.getElementById('btn-teleport');
+    btnTp.disabled = true;
     showOverlay('Đang dịch chuyển...');
     const result = await electronAPI.setLocation(selectedLat, selectedLng, currentUdid);
     hideOverlay();
-
     if (result.ok) {
         startLocationKeepAlive(selectedLat, selectedLng, currentUdid);
-        showToast('✅ Đã dịch chuyển thành công (đang giữ vị trí ảo).', 'success');
+        showToast('✅ Thành công!', 'success');
         addHistory(selectedLat, selectedLng, selectedPlace);
     } else {
-        if (result.error === 'no_tool') {
-            showToast('❌ Chưa cài công cụ. Xem hướng dẫn bên trái.', 'error');
-        } else {
-            showToast(`❌ Lỗi: ${normalizeUserError(result.error)}`, 'error');
-        }
+        showToast(`❌ Lỗi: ${normalizeUserError(result.error)}`, 'error');
     }
     isTeleporting = false;
-    document.getElementById('btn-teleport').disabled = false;
-    document.getElementById('btn-refresh').disabled = false;
-    refreshDevices();
+    btnTp.disabled = false;
 };
 
 document.getElementById('btn-reset').onclick = async () => {
     stopLocationKeepAlive();
     pinnedLocation = null;
     localStorage.removeItem(PINNED_LOCATION_KEY);
-    showOverlay('Đang đặt lại vị trí...');
+    showOverlay('Đang đặt lại...');
     const result = await electronAPI.resetLocation(currentUdid);
     hideOverlay();
     if (result.ok) showToast('✅ Đã đặt lại vị trí gốc', 'success');
-    else showToast('❌ Không thể đặt lại. Thử tắt ứng dụng.', 'error');
+    else showToast('❌ Thất bại', 'error');
 };
 
 // ─── History ──────────────────────────────────────────────────────────────
 function addHistory(lat, lng, place) {
-    const item = {
-        lat, lng,
-        place: place ? place.split(',').slice(0, 2).join(',').trim() : `${lat}, ${lng}`,
-        time: Date.now()
-    };
+    const item = { lat, lng, place: place ? place.split(',').slice(0, 2).join(',').trim() : `${lat}, ${lng}`, time: Date.now() };
     history = [item, ...history.filter(h => !(Math.abs(h.lat - lat) < 0.001 && Math.abs(h.lng - lng) < 0.001))].slice(0, 20);
     localStorage.setItem('bh-gps-history', JSON.stringify(history));
     renderHistory();
 }
-
 function renderHistory() {
     const list = document.getElementById('history-list');
-    if (!history.length) {
-        list.innerHTML = '<div class="empty-hint">Chưa có lịch sử</div>';
-        return;
-    }
-    list.innerHTML = history.map((h, i) => `
-        <div class="history-item" data-i="${i}">
-            <span class="history-icon">📍</span>
-            <div class="history-info">
-                <div class="history-place">${h.place}</div>
-                <div class="history-coords">${h.lat.toFixed(4)}, ${h.lng.toFixed(4)}</div>
-            </div>
-            <button class="history-del" data-del="${i}">✕</button>
-        </div>
-    `).join('');
-
+    if (!history.length) { list.innerHTML = '<div class="empty-hint">Chưa có lịch sử</div>'; return; }
+    list.innerHTML = history.map((h, i) => `<div class="history-item" data-i="${i}"><span class="history-icon">📍</span><div class="history-info"><div class="history-place">${h.place}</div><div class="history-coords">${h.lat.toFixed(4)}, ${h.lng.toFixed(4)}</div></div><button class="history-del" data-del="${i}">✕</button></div>`).join('');
     list.querySelectorAll('.history-item').forEach(el => {
         const i = +el.dataset.i;
-        el.onclick = (e) => {
-            if (e.target.matches('.history-del')) return;
-            const h = history[i];
-            map.setView([h.lat, h.lng], 14, { animate: true });
-            selectLocation(h.lat, h.lng, h.place, true);
-        };
-        el.querySelector('.history-del').onclick = () => {
-            history.splice(i, 1);
-            localStorage.setItem('bh-gps-history', JSON.stringify(history));
-            renderHistory();
-        };
+        el.onclick = (e) => { if (e.target.matches('.history-del')) return; const h = history[i]; map.setView([h.lat, h.lng], 14, { animate: true }); selectLocation(h.lat, h.lng, h.place, true); };
+        el.querySelector('.history-del').onclick = () => { history.splice(i, 1); localStorage.setItem('bh-gps-history', JSON.stringify(history)); renderHistory(); };
     });
 }
-
-document.getElementById('btn-clear-history').onclick = () => {
-    history = [];
-    localStorage.setItem('bh-gps-history', '[]');
-    renderHistory();
-};
+document.getElementById('btn-clear-history').onclick = () => { history = []; localStorage.setItem('bh-gps-history', '[]'); renderHistory(); };
 
 // ─── UI helpers ───────────────────────────────────────────────────────────
-function showOverlay(text) {
-    document.getElementById('overlay-text').textContent = text;
-    document.getElementById('map-overlay').classList.remove('hidden');
-}
-function hideOverlay() {
-    document.getElementById('map-overlay').classList.add('hidden');
-}
-
+function showOverlay(text) { document.getElementById('overlay-text').textContent = text; document.getElementById('map-overlay').classList.remove('hidden'); }
+function hideOverlay() { document.getElementById('map-overlay').classList.add('hidden'); }
 let toastTimer;
 function showToast(msg, type = 'info') {
-    const toast = document.getElementById('toast');
-    toast.textContent = msg;
-    toast.className = `show ${type}`;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toast.className = ''; }, 3000);
+    const toast = document.getElementById('toast'); toast.textContent = msg; toast.className = `show ${type}`;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.className = ''; }, 3000);
 }
-
-// ─── Title bar ────────────────────────────────────────────────────────────
 document.getElementById('btn-min').onclick   = () => electronAPI.minimize();
 document.getElementById('btn-max').onclick   = () => electronAPI.maximize();
 document.getElementById('btn-close').onclick = () => electronAPI.close();
-
-// ─── Guide link ───────────────────────────────────────────────────────────
-function openUrl(url) { electronAPI.openUrl(url); }
-window.openUrl = openUrl;
+window.openUrl = (url) => electronAPI.openUrl(url);
+window.wizardInstallPmd = wizardInstallPmd;
+window.wizardInstallPython = wizardInstallPython;
+window.wizardRefreshIphone = wizardRefreshIphone;
+window.wizardContinue = wizardContinue;
+window.showWizard = showWizard;
 
 // ─── Boot ─────────────────────────────────────────────────────────────────
 async function init() {
     initMap();
     renderHistory();
-    await Promise.all([refreshDevices(), checkTool()]);
 
-    // Resume pinned fake location keep-alive if app was restarted.
-    try {
-        const savedPinned = JSON.parse(localStorage.getItem(PINNED_LOCATION_KEY) || 'null');
-        if (savedPinned && Number.isFinite(savedPinned.lat) && Number.isFinite(savedPinned.lng)) {
-            if (savedPinned.udid) currentUdid = savedPinned.udid;
-            if (!Number.isFinite(savedPinned.cursorLat)) savedPinned.cursorLat = savedPinned.lat;
-            if (!Number.isFinite(savedPinned.cursorLng)) savedPinned.cursorLng = savedPinned.lng;
-            startLocationKeepAlive(savedPinned.lat, savedPinned.lng, savedPinned.udid || currentUdid);
-            showToast('🔒 Đang tự giữ vị trí ảo đã ghim trước đó.', 'info');
+    // Requirements Check — decide which page to show first
+    const { py } = await electronAPI.getPython();
+    const { tool } = await electronAPI.detectTool();
+
+    if (!py || !tool || !tool.startsWith('pymobiledevice3')) {
+        showWizard();
+    } else {
+        document.getElementById('wizard').classList.add('hidden');
+        document.getElementById('wizard').classList.add('hidden-by-user');
+        document.getElementById('connecting-page').classList.remove('hidden');
+        startFullConnection();
+    }
+
+    // Resume pinned keep-alive ONLY after the main layout becomes visible
+    // to avoid hammering setLocation before tunnel is ready.
+    // We listen for the layout becoming visible (either via markSetupDone or skipSetup).
+    const resumePinned = () => {
+        try {
+            const savedPinned = JSON.parse(localStorage.getItem(PINNED_LOCATION_KEY) || 'null');
+            if (savedPinned && Number.isFinite(savedPinned.lat) && Number.isFinite(savedPinned.lng)) {
+                if (savedPinned.udid) currentUdid = savedPinned.udid;
+                if (!Number.isFinite(savedPinned.cursorLat)) savedPinned.cursorLat = savedPinned.lat;
+                if (!Number.isFinite(savedPinned.cursorLng)) savedPinned.cursorLng = savedPinned.lng;
+                startLocationKeepAlive(savedPinned.lat, savedPinned.lng, savedPinned.udid || currentUdid);
+                showToast('🔒 Đang giữ vị trí ảo đã ghim.', 'info');
+            }
+        } catch { }
+    };
+
+    // Watch for layout visibility
+    const layoutObserver = new MutationObserver(() => {
+        const layout = document.getElementById('layout');
+        if (!layout.classList.contains('hidden')) {
+            layoutObserver.disconnect();
+            resumePinned();
         }
-    } catch { }
+    });
+    layoutObserver.observe(document.getElementById('layout'), { attributes: true, attributeFilter: ['class'] });
 
-    // Auto-refresh devices every 5s
-    deviceRefreshTimer = setInterval(() => {
-        refreshDevices();
-    }, 5000);
+    // Fallback: if layout is already visible (e.g. wizard skipped instantly)
+    if (!document.getElementById('layout').classList.contains('hidden')) {
+        layoutObserver.disconnect();
+        resumePinned();
+    }
+
+    setInterval(refreshDevices, 5000);
 }
-
 init();
+

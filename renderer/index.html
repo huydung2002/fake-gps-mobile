@@ -26,8 +26,118 @@
         </div>
     </div>
 
-    <!-- Main layout -->
-    <div id="layout">
+    <!-- ═══ SETUP WIZARD ═════════════════════════════════════════════════════ -->
+    <div id="wizard">
+        <div id="wizard-card">
+            <!-- Header -->
+            <div id="wizard-header">
+                <div id="wizard-logo">📍</div>
+                <div id="wizard-title">Thiết lập iOS GPS Spoofer</div>
+                <div id="wizard-sub">Kiểm tra và cài đặt các thành phần cần thiết</div>
+            </div>
+
+            <!-- Admin warning -->
+            <div id="wizard-admin-warn" class="hidden">
+                <span>⚠️</span>
+                <span>App chưa được chạy bằng <strong>Run as Administrator</strong>. Một số tính năng có thể không hoạt động.</span>
+            </div>
+
+            <!-- Requirements -->
+            <div id="wizard-reqs">
+
+                <!-- Req 1: Python -->
+                <div class="req-row" id="req-python">
+                    <div class="req-icon" id="req-python-icon">⏳</div>
+                    <div class="req-body">
+                        <div class="req-title">Python 3.x</div>
+                        <div class="req-desc" id="req-python-desc">Đang kiểm tra...</div>
+                    </div>
+                    <div class="req-action">
+                        <button class="req-btn hidden" id="btn-install-python"
+                            onclick="wizardInstallPython()">⬇ Tải Python</button>
+                    </div>
+                </div>
+
+                <!-- Req 2: pymobiledevice3 -->
+                <div class="req-row" id="req-pmd">
+                    <div class="req-icon" id="req-pmd-icon">⏳</div>
+                    <div class="req-body">
+                        <div class="req-title">pymobiledevice3</div>
+                        <div class="req-desc" id="req-pmd-desc">Đang kiểm tra...</div>
+                        <!-- Progress bar for pip install -->
+                        <div id="pmd-progress-wrap" class="hidden">
+                            <div id="pmd-progress-bar"></div>
+                        </div>
+                        <div id="pmd-install-log" class="req-log hidden"></div>
+                    </div>
+                    <div class="req-action">
+                        <button class="req-btn hidden" id="btn-install-pmd"
+                            onclick="wizardInstallPmd()">⚡ Cài tự động</button>
+                    </div>
+                </div>
+
+                <!-- Req 3: iPhone -->
+                <div class="req-row" id="req-iphone">
+                    <div class="req-icon" id="req-iphone-icon">⏳</div>
+                    <div class="req-body">
+                        <div class="req-title">iPhone kết nối qua USB</div>
+                        <div class="req-desc" id="req-iphone-desc">Đang tìm thiết bị...</div>
+                    </div>
+                    <div class="req-action">
+                        <button class="req-btn hidden" id="btn-refresh-iphone"
+                            onclick="wizardRefreshIphone()">↻ Kiểm tra lại</button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Tips when iPhone not found -->
+            <div id="wizard-iphone-tips" class="hidden">
+                <div class="tip-item">① Cắm cáp USB Lightning / USB-C từ iPhone vào máy tính</div>
+                <div class="tip-item">② Trên iPhone: bấm <strong>Trust</strong> khi được hỏi</div>
+                <div class="tip-item">③ iOS 16+: Bật <strong>Developer Mode</strong> trong Cài đặt → Quyền riêng tư</div>
+                <div class="tip-item">④ Chạy app với <strong>Run as Administrator</strong></div>
+            </div>
+
+            <!-- Continue button -->
+            <button id="btn-wizard-continue" class="wizard-continue-btn" disabled
+                onclick="wizardContinue()">
+                Tiếp tục →
+            </button>
+            <div id="wizard-continue-hint">Cần Python và pymobiledevice3 để tiếp tục</div>
+        </div>
+    </div>
+
+    <!-- ═══ CONNECTING PAGE ══════════════════════════════════════════════════ -->
+    <div id="connecting-page" class="hidden">
+        <div id="connecting-card">
+            <div id="setup-anim">
+                <div class="setup-device">📱</div>
+                <div class="setup-dots"><span></span><span></span><span></span><span></span></div>
+                <div class="setup-device">💻</div>
+            </div>
+            <div id="setup-title">Đang thiết lập kết nối...</div>
+            <div id="setup-steps">
+                <div class="setup-step" id="step-device">
+                    <span class="step-icon">○</span>
+                    <span class="step-label">Phát hiện thiết bị</span>
+                </div>
+                <div class="setup-step" id="step-tunnel">
+                    <span class="step-icon">○</span>
+                    <span class="step-label">Kết nối tunnel iOS</span>
+                </div>
+                <div class="setup-step" id="step-worker">
+                    <span class="step-icon">○</span>
+                    <span class="step-label">Chuẩn bị dịch chuyển tức thì ⚡</span>
+                </div>
+            </div>
+            <div id="setup-hint">Lần đầu có thể mất 15–30 giây. Các lần sau sẽ nhanh hơn.</div>
+            <button id="btn-skip-setup" onclick="skipSetup()">Bỏ qua, dùng chế độ thường</button>
+        </div>
+    </div>
+
+    <!-- ═══ MAIN APP ══════════════════════════════════════════════════════════ -->
+    <div id="layout" class="hidden">
         <!-- Sidebar -->
         <aside id="sidebar">
             <!-- Device section -->
@@ -44,15 +154,8 @@
                 <select id="device-select" class="select-box hidden">
                     <option value="">-- Chọn thiết bị --</option>
                 </select>
-                <div id="tool-status" class="tool-badge tool-waiting">
-                    Kiểm tra công cụ...
-                </div>
-                <button id="btn-install" class="btn-install hidden">
-                    ⬇ Cài pymobiledevice3 tự động
-                </button>
-                <div id="install-log" class="install-log hidden"></div>
+                <div id="tunnel-badge" class="tunnel-badge tunnel-idle">○ Tunnel chưa kết nối</div>
             </section>
-
 
             <!-- Selected location -->
             <section class="panel" id="panel-location">
@@ -96,52 +199,16 @@
                 </div>
             </section>
 
-            <!-- Setup guide -->
-            <section class="panel panel-guide" id="panel-guide">
-                <div class="panel-header">
-                    <span class="panel-icon">⚙️</span>
-                    <span class="panel-title">Hướng dẫn cài đặt</span>
-                </div>
-                <div class="guide-steps">
-                    <div class="guide-step">
-                        <span class="step-num">1</span>
-                        <div>
-                            <div class="step-title">Cài libimobiledevice</div>
-                            <button class="link-btn"
-                                onclick="openUrl('https://github.com/libimobiledevice/libimobiledevice')">Tải về
-                                →</button>
-                        </div>
-                    </div>
-                    <div class="guide-step">
-                        <span class="step-num">2</span>
-                        <div>
-                            <div class="step-title">Hoặc cài Python + pymobiledevice3</div>
-
-                            <code class="inline-code">pip install pymobiledevice3</code>
-                            <div class="step-title">Mở cmd -> Run as Administrator -> gõ lệnh "pnpm start"</div>
-                        </div>
-                    </div>
-                    <div class="guide-step">
-                        <span class="step-num">3</span>
-                        <div>
-                            <div class="step-title">Cắm iPhone, tin tưởng máy tính</div>
-                        </div>
-                    </div>
-                    <div class="guide-step">
-                        <span class="step-num">4</span>
-                        <div>
-                            <div class="step-title">iOS 16+: Bật Developer Mode</div>
-                            <span class="step-sub">Cài đặt → Quyền riêng tư → Developer Mode</span>
-                        </div>
-                    </div>
-                </div>
-            </section>
+            <!-- Re-setup button at bottom -->
+            <div id="sidebar-footer">
+                <button class="link-btn" onclick="showWizard()">⚙ Cài đặt lại</button>
+            </div>
         </aside>
 
         <!-- Map container -->
         <div id="map-container">
             <div id="map"></div>
-            <!-- Overlay status -->
+            <!-- Overlay status (for slow path teleport) -->
             <div id="map-overlay" class="hidden">
                 <div id="overlay-content">
                     <div class="overlay-spinner"></div>
