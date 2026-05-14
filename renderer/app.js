@@ -433,15 +433,34 @@ function startLocationKeepAlive(lat, lng, udid) {
 
 // ─── Map init ─────────────────────────────────────────────────────────────
 function initMap() {
+    const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+    const satelliteLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 20, attribution: '© Google' });
+
     map = L.map('map', {
         center: [16.047, 108.206],
         zoom: 6,
         zoomControl: false,
         attributionControl: false,
+        layers: [streetLayer]
     });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    
     L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
+    
+    // Custom layer toggles
+    document.getElementById('btn-layer-street').onclick = () => {
+        map.addLayer(streetLayer);
+        map.removeLayer(satelliteLayer);
+        document.getElementById('btn-layer-street').classList.add('active');
+        document.getElementById('btn-layer-satellite').classList.remove('active');
+    };
+    document.getElementById('btn-layer-satellite').onclick = () => {
+        map.addLayer(satelliteLayer);
+        map.removeLayer(streetLayer);
+        document.getElementById('btn-layer-satellite').classList.add('active');
+        document.getElementById('btn-layer-street').classList.remove('active');
+    };
+    
     map.on('click', onMapClick);
 
     const saved = sessionStorage.getItem('bh-last-loc');
