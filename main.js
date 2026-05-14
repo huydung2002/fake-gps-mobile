@@ -1089,6 +1089,21 @@ ipcMain.handle('install-python', async () => {
     });
 });
 
+ipcMain.handle('scan-wifi', async () => {
+    const py = await getPythonCmd();
+    if (!py) return { ok: false, error: 'Chưa tìm thấy Python.' };
+    try {
+        const { stdout } = await execAsync(`${py} -m pymobiledevice3 remote browse --timeout 2`, { timeout: 12000 });
+        const clean = normalizeCliText(stdout);
+        const start = clean.indexOf('{');
+        if (start === -1) return { ok: true, devices: [] };
+        const data = JSON.parse(clean.slice(start));
+        return { ok: true, devices: data.wifi || [] };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+});
+
 ipcMain.handle('detect-tool', async () => {
     const tool = await detectTool();
     return { tool };

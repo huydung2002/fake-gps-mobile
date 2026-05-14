@@ -150,7 +150,10 @@
                 <div class="panel-header">
                     <span class="panel-icon">📱</span>
                     <span class="panel-title">Thiết bị</span>
-                    <button id="btn-refresh" class="icon-btn" title="Làm mới">↻</button>
+                    <div style="display: flex; gap: 4px;">
+                        <button id="btn-open-wifi" class="icon-btn" title="Quét Wi-Fi" onclick="document.getElementById('wifi-modal').classList.remove('hidden')">📡</button>
+                        <button id="btn-refresh" class="icon-btn" title="Làm mới">↻</button>
+                    </div>
                 </div>
                 <div id="device-status" class="status-row">
                     <div class="status-dot dot-waiting" id="device-dot"></div>
@@ -230,6 +233,41 @@
             <div id="map-tip">Click vào bản đồ để chọn vị trí</div>
             <!-- Toast -->
             <div id="toast"></div>
+
+            <!-- WiFi Modal -->
+            <div id="wifi-modal" class="hidden">
+                <div id="wifi-card">
+                    <div class="wifi-header">
+                        <div class="wifi-title">📡 Quét thiết bị Wi-Fi (iOS 17+)</div>
+                        <button class="icon-btn" onclick="closeWifiModal()">✕</button>
+                    </div>
+                    <div class="wifi-desc">Đảm bảo máy tính và iPhone đang kết nối cùng một mạng Wi-Fi.</div>
+                    
+                    <div class="wifi-actions">
+                        <button id="btn-scan-wifi" class="btn-primary" onclick="scanWifi()">
+                            <span class="btn-icon">↻</span> Quét mạng
+                        </button>
+                    </div>
+
+                    <div class="wifi-table-container">
+                        <table class="wifi-table">
+                            <thead>
+                                <tr>
+                                    <th>Thiết bị</th>
+                                    <th>IP / Cổng</th>
+                                    <th>UDID</th>
+                                    <th>Hành động</th>
+                                </tr>
+                            </thead>
+                            <tbody id="wifi-table-body">
+                                <tr>
+                                    <td colspan="4" class="wifi-empty">Chưa quét. Hãy bấm "Quét mạng".</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -797,6 +797,71 @@ function showToast(msg, type = 'info') {
 }
 document.getElementById('btn-min').onclick   = () => electronAPI.minimize();
 document.getElementById('btn-max').onclick   = () => electronAPI.maximize();
+// ─── Wi-Fi Modal ────────────────────────────────────────────────────────
+function closeWifiModal() {
+    document.getElementById('wifi-modal').classList.add('hidden');
+}
+
+async function scanWifi() {
+    const btn = document.getElementById('btn-scan-wifi');
+    const tbody = document.getElementById('wifi-table-body');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-icon">⏳</span> Đang quét...';
+    tbody.innerHTML = '<tr><td colspan="4" class="wifi-empty">Đang tìm kiếm thiết bị trên mạng...</td></tr>';
+    
+    try {
+        const result = await electronAPI.scanWifi();
+        if (result.ok) {
+            const devices = result.devices;
+            if (!devices || devices.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="wifi-empty">Không tìm thấy thiết bị nào. Hãy kiểm tra kết nối Wi-Fi.</td></tr>';
+            } else {
+                tbody.innerHTML = devices.map((d, i) => {
+                    const host = d.host || d.address || d.ip || 'Unknown';
+                    const port = d.port || 'Unknown';
+                    const udid = d.udid || d.SerialNumber || 'Unknown';
+                    const name = d.name || d.DeviceName || d.ProductType || 'iPhone';
+                    const shortUdid = udid.length > 10 ? udid.slice(0,8) + '...' : udid;
+                    return `
+                        <tr>
+                            <td><strong>${name}</strong></td>
+                            <td>${host}:${port}</td>
+                            <td title="${udid}"><span class="udid-tag">${shortUdid}</span></td>
+                            <td>
+                                <button class="btn-connect-wifi" onclick="connectWifi('${udid}', '${name}')">Kết nối</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        } else {
+            tbody.innerHTML = `<tr><td colspan="4" class="wifi-empty" style="color: #ef4444 !important;">Lỗi: ${result.error}</td></tr>`;
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" class="wifi-empty" style="color: #ef4444 !important;">Lỗi: ${e.message}</td></tr>`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">↻</span> Quét mạng';
+    }
+}
+
+function connectWifi(udid, name) {
+    showToast(`Đang kết nối tới ${name}...`, 'info');
+    closeWifiModal();
+    // Simulate selection and connect
+    currentUdid = udid;
+    // Append to select if not exist
+    const sel = document.getElementById('device-select');
+    if (!Array.from(sel.options).some(o => o.value === udid)) {
+        const opt = document.createElement('option');
+        opt.value = udid;
+        opt.text = name;
+        sel.add(opt);
+    }
+    sel.value = udid;
+    setupTunnel(udid);
+}
+
 document.getElementById('btn-close').onclick = () => electronAPI.close();
 window.openUrl = (url) => electronAPI.openUrl(url);
 window.wizardInstallPmd = wizardInstallPmd;
@@ -804,6 +869,9 @@ window.wizardInstallPython = wizardInstallPython;
 window.wizardRefreshIphone = wizardRefreshIphone;
 window.wizardContinue = wizardContinue;
 window.showWizard = showWizard;
+window.closeWifiModal = closeWifiModal;
+window.scanWifi = scanWifi;
+window.connectWifi = connectWifi;
 
 // ─── Boot ─────────────────────────────────────────────────────────────────
 async function init() {

@@ -1302,3 +1302,119 @@ body {
     border: 1px dashed var(--line);
     border-radius: var(--radius-md);
 }
+
+/* ═══ WIFI MODAL ═══════════════════════════════════════════════════════════ */
+#wifi-modal {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    background: rgba(6, 11, 24, 0.85);
+    backdrop-filter: blur(6px);
+    transition: opacity 0.3s ease;
+}
+
+#wifi-modal.hidden {
+    display: none;
+    opacity: 0;
+}
+
+#wifi-card {
+    background: linear-gradient(160deg, rgba(20,33,60,0.95), rgba(13,21,40,0.98));
+    border: 1px solid rgba(79,140,255,0.2);
+    border-radius: 16px;
+    width: 600px;
+    max-width: 95%;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    overflow: hidden;
+}
+
+.wifi-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(0,0,0,0.2);
+}
+
+.wifi-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-1);
+}
+
+.wifi-desc {
+    padding: 12px 20px 0;
+    font-size: 12px;
+    color: var(--text-2);
+}
+
+.wifi-actions {
+    padding: 16px 20px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.wifi-table-container {
+    padding: 0 20px 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.wifi-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    text-align: left;
+}
+
+.wifi-table th {
+    color: var(--text-3);
+    font-weight: 500;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+}
+
+.wifi-table td {
+    color: var(--text-1);
+    padding: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.wifi-table tr:hover td {
+    background: rgba(79, 140, 255, 0.08);
+}
+
+.wifi-empty {
+    text-align: center !important;
+    color: var(--text-3) !important;
+    padding: 30px !important;
+    font-style: italic;
+}
+
+.btn-connect-wifi {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.15s ease;
+}
+
+.btn-connect-wifi:hover {
+    background: #6aa3ff;
+}
+
+.btn-connect-wifi:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

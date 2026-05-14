@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetLocation:     (udid) => ipcRenderer.invoke('reset-location', { udid }),
     installTool:       () => ipcRenderer.invoke('install-tool'),
     installPython:     () => ipcRenderer.invoke('install-python'),
+    scanWifi:          () => ipcRenderer.invoke('scan-wifi'),
     getPython:         () => ipcRenderer.invoke('get-python'),
     openUrl:           (url) => ipcRenderer.invoke('open-url', url),
     setupTunnel:       (udid) => ipcRenderer.invoke('setup-tunnel', { udid }),
