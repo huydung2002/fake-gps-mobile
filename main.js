@@ -548,10 +548,21 @@ async function detectTool() {
 
 // ─── Auto-install pymobiledevice3 ────────────────────────────────────────────
 async function getPythonCmd() {
-    for (const cmd of ['python', 'python3', 'py']) {
+    const cmds = ['python', 'python3', 'py'];
+    
+    if (process.platform === 'win32') {
+        const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE + '\\AppData\\Local');
+        for (let minor = 13; minor >= 10; minor--) {
+            cmds.push(`${localAppData}\\Programs\\Python\\Python3${minor}\\python.exe`);
+        }
+        cmds.push('C:\\Program Files\\Python312\\python.exe');
+        cmds.push('C:\\Program Files\\Python311\\python.exe');
+    }
+
+    for (const cmd of cmds) {
         try {
-            const { stdout } = await execAsync(`${cmd} --version`, { timeout: 3000 });
-            if (stdout.includes('Python') || (await execAsync(`${cmd} --version 2>&1`)).stderr?.includes('Python')) {
+            const { stdout } = await execAsync(`"${cmd}" --version`, { timeout: 3000 });
+            if (stdout.includes('Python') || (await execAsync(`"${cmd}" --version 2>&1`)).stderr?.includes('Python')) {
                 return cmd;
             }
         } catch { }
@@ -1036,6 +1047,46 @@ ipcMain.handle('install-tool', async () => {
 ipcMain.handle('get-python', async () => {
     const py = await getPythonCmd();
     return { py };
+});
+
+ipcMain.handle('install-python', async () => {
+    return new Promise((resolve) => {
+        const https = require('https');
+        const fs = require('fs');
+        const url = 'https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe';
+        const installerPath = path.join(app.getPath('temp'), 'python-installer.exe');
+        
+        mainWindow.webContents.send('install-python-progress', 'Đang tải Python installer...\n');
+        
+        const file = fs.createWriteStream(installerPath);
+        https.get(url, (response) => {
+            if (response.statusCode !== 200) {
+                mainWindow.webContents.send('install-python-progress', `\nLỗi tải: HTTP ${response.statusCode}`);
+                resolve({ ok: false, error: `HTTP ${response.statusCode}` });
+                return;
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close();
+                mainWindow.webContents.send('install-python-progress', 'Tải xong, đang cài đặt ngầm (có thể mất vài phút)...\n');
+                
+                const proc = spawn(installerPath, ['/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_test=0'], { windowsHide: true });
+                proc.on('close', code => {
+                    if (code === 0) {
+                        mainWindow.webContents.send('install-python-progress', '✅ Cài đặt thành công!\n');
+                        resolve({ ok: true });
+                    } else {
+                        mainWindow.webContents.send('install-python-progress', `❌ Lỗi cài đặt (code: ${code}).\n`);
+                        resolve({ ok: false, error: `Installer exited with code ${code}` });
+                    }
+                });
+            });
+        }).on('error', (err) => {
+            fs.unlink(installerPath, () => {});
+            mainWindow.webContents.send('install-python-progress', `❌ Lỗi tải file: ${err.message}\n`);
+            resolve({ ok: false, error: err.message });
+        });
+    });
 });
 
 ipcMain.handle('detect-tool', async () => {

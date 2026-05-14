@@ -165,9 +165,38 @@ async function wizardInstallPmd() {
     }
 }
 
-function wizardInstallPython() {
-    electronAPI.openUrl('https://www.python.org/downloads/');
-    showToast('Hãy tải và cài đặt Python (nhớ tick "Add Python to PATH")', 'info');
+async function wizardInstallPython() {
+    const log = document.getElementById('python-install-log');
+    const progWrap = document.getElementById('python-progress-wrap');
+    const progBar = document.getElementById('python-progress-bar');
+    const btn = document.getElementById('btn-install-python');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Đang cài...';
+    log.classList.remove('hidden');
+    progWrap.classList.remove('hidden');
+    log.textContent = 'Bắt đầu cài đặt Python...\n';
+    progBar.style.width = '10%';
+
+    electronAPI.onPythonInstallProgress((data) => {
+        log.textContent += data;
+        log.scrollTop = log.scrollHeight;
+        const p = Math.min(90, 10 + (log.textContent.length / 200) * 80);
+        progBar.style.width = `${p}%`;
+    });
+
+    const result = await electronAPI.installPython();
+    if (result.ok) {
+        progBar.style.width = '100%';
+        log.textContent += '\n✅ Cài đặt thành công!';
+        showToast('✅ Cài Python thành công!', 'success');
+        setTimeout(checkWizardRequirements, 1500);
+    } else {
+        log.textContent += `\n❌ Lỗi: ${result.error || 'Không rõ'}`;
+        showToast('❌ Cài thất bại.', 'error');
+        btn.disabled = false;
+        btn.textContent = '↻ Thử lại';
+    }
 }
 
 function wizardRefreshIphone() {

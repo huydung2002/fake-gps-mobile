@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setLocation:       (lat, lng, udid) => ipcRenderer.invoke('set-location', { lat, lng, udid }),
     resetLocation:     (udid) => ipcRenderer.invoke('reset-location', { udid }),
     installTool:       () => ipcRenderer.invoke('install-tool'),
+    installPython:     () => ipcRenderer.invoke('install-python'),
     getPython:         () => ipcRenderer.invoke('get-python'),
     openUrl:           (url) => ipcRenderer.invoke('open-url', url),
     setupTunnel:       (udid) => ipcRenderer.invoke('setup-tunnel', { udid }),
@@ -17,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize:          () => ipcRenderer.send('win-maximize'),
     close:             () => ipcRenderer.send('win-close'),
     onInstallProgress: (cb) => ipcRenderer.on('install-progress', (_, data) => cb(data)),
+    onPythonInstallProgress: (cb) => ipcRenderer.on('install-python-progress', (_, data) => cb(data)),
     onTunnelStatus:    (cb) => ipcRenderer.on('tunnel-status-changed', (_, data) => cb(data)),
     onWorkerReady:     (cb) => ipcRenderer.on('worker-ready', (_, data) => cb(data)),
 });

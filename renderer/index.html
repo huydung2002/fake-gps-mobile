@@ -32,7 +32,7 @@
             <!-- Header -->
             <div id="wizard-header">
                 <div id="wizard-logo">📍</div>
-                <div id="wizard-title">Thiết lập iOS GPS Spoofer</div>
+                <div id="wizard-title">Thiết lập iOS GPS by BraveHoang</div>
                 <div id="wizard-sub">Kiểm tra và cài đặt các thành phần cần thiết</div>
             </div>
 
@@ -51,10 +51,15 @@
                     <div class="req-body">
                         <div class="req-title">Python 3.x</div>
                         <div class="req-desc" id="req-python-desc">Đang kiểm tra...</div>
+                        <!-- Progress bar for Python install -->
+                        <div id="python-progress-wrap" class="hidden">
+                            <div id="python-progress-bar"></div>
+                        </div>
+                        <div id="python-install-log" class="req-log hidden"></div>
                     </div>
                     <div class="req-action">
                         <button class="req-btn hidden" id="btn-install-python"
-                            onclick="wizardInstallPython()">⬇ Tải Python</button>
+                            onclick="wizardInstallPython()">⚡ Cài tự động</button>
                     </div>
                 </div>
 
