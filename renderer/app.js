@@ -449,7 +449,43 @@ function initMap() {
         try {
             const { lat, lng, place } = JSON.parse(saved);
             selectLocation(lat, lng, place, false);
+            map.setView([lat, lng], 14);
         } catch { }
+    } else {
+        // Tự động lấy vị trí hiện tại (PC/Wifi) giống Google Maps khi mới mở app
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    map.setView([lat, lng], 15, { animate: true });
+                    
+                    // Thêm một marker nhỏ biểu diễn vị trí hiện tại của PC
+                    const pcIcon = L.divIcon({
+                        className: '',
+                        html: `<div style="
+                            width:16px;height:16px;border-radius:50%;
+                            background:rgba(34,197,94,0.3);
+                            border:2px solid #22c55e;
+                            box-shadow:0 0 8px rgba(34,197,94,0.4);
+                            position:relative;
+                        "><div style="
+                            position:absolute;inset:3px;border-radius:50%;
+                            background:#22c55e;
+                        "></div></div>`,
+                        iconSize: [16, 16],
+                        iconAnchor: [8, 8],
+                    });
+                    L.marker([lat, lng], { icon: pcIcon })
+                        .bindTooltip('Vị trí hiện tại của bạn', { permanent: false, direction: 'top' })
+                        .addTo(map);
+                },
+                (err) => {
+                    console.log("Không thể lấy vị trí PC: ", err);
+                },
+                { enableHighAccuracy: true, timeout: 5000 }
+            );
+        }
     }
 }
 
@@ -685,38 +721,6 @@ electronAPI.onWorkerReady(() => {
     markSetupDone();
     updateTunnelBadge();
     showToast('⚡ Chế độ tức thì đã sẵn sàng!', 'success');
-
-    // Fetch iPhone's real GPS location and center map on it
-    electronAPI.getIphoneLocation().then(result => {
-        if (result && result.ok && result.lat && result.lng) {
-            const lat = result.lat;
-            const lng = result.lng;
-            // Center map on iPhone's real location
-            if (map) map.setView([lat, lng], 15, { animate: true });
-            // Show a distinct "current iPhone location" marker
-            const iphoneIcon = L.divIcon({
-                className: '',
-                html: `<div style="
-                    width:18px;height:18px;border-radius:50%;
-                    background:rgba(59,130,246,0.25);
-                    border:3px solid #3b82f6;
-                    box-shadow:0 0 0 6px rgba(59,130,246,0.15);
-                    position:relative;
-                "><div style="
-                    position:absolute;inset:3px;border-radius:50%;
-                    background:#3b82f6;
-                "></div></div>`,
-                iconSize: [18, 18],
-                iconAnchor: [9, 9],
-            });
-            L.marker([lat, lng], { icon: iphoneIcon })
-                .bindTooltip('📱 Vị trí thực của iPhone', { permanent: false, direction: 'top' })
-                .addTo(map);
-            showToast(`📍 Vị trí iPhone: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'info');
-        }
-    }).catch(() => {
-        // get-location not supported or failed — no-op
-    });
 });
 
 // ─── Teleport ─────────────────────────────────────────────────────────────
@@ -755,17 +759,6 @@ document.getElementById('btn-teleport').onclick = async () => {
     }
     isTeleporting = false;
     btnTp.disabled = false;
-};
-
-document.getElementById('btn-reset').onclick = async () => {
-    stopLocationKeepAlive();
-    pinnedLocation = null;
-    localStorage.removeItem(PINNED_LOCATION_KEY);
-    showOverlay('Đang đặt lại...');
-    const result = await electronAPI.resetLocation(currentUdid);
-    hideOverlay();
-    if (result.ok) showToast('✅ Đã đặt lại vị trí gốc', 'success');
-    else showToast('❌ Thất bại', 'error');
 };
 
 // ─── History ──────────────────────────────────────────────────────────────
@@ -913,6 +906,7 @@ async function init() {
         if (!layout.classList.contains('hidden')) {
             layoutObserver.disconnect();
             resumePinned();
+            fetchAndShowIphoneLocation();
         }
     });
     layoutObserver.observe(document.getElementById('layout'), { attributes: true, attributeFilter: ['class'] });
@@ -921,6 +915,42 @@ async function init() {
     if (!document.getElementById('layout').classList.contains('hidden')) {
         layoutObserver.disconnect();
         resumePinned();
+        fetchAndShowIphoneLocation();
+    }
+
+    // Helper to fetch location when map is actually visible
+    function fetchAndShowIphoneLocation() {
+        if (workerReady) {
+            electronAPI.getIphoneLocation().then(result => {
+                if (result && result.ok && result.lat && result.lng) {
+                    const lat = result.lat;
+                    const lng = result.lng;
+                    if (map) {
+                        map.invalidateSize();
+                        map.setView([lat, lng], 15, { animate: true });
+                        const iphoneIcon = L.divIcon({
+                            className: '',
+                            html: `<div style="
+                                width:18px;height:18px;border-radius:50%;
+                                background:rgba(59,130,246,0.25);
+                                border:3px solid #3b82f6;
+                                box-shadow:0 0 0 6px rgba(59,130,246,0.15);
+                                position:relative;
+                            "><div style="
+                                position:absolute;inset:3px;border-radius:50%;
+                                background:#3b82f6;
+                            "></div></div>`,
+                            iconSize: [18, 18],
+                            iconAnchor: [9, 9],
+                        });
+                        L.marker([lat, lng], { icon: iphoneIcon })
+                            .bindTooltip('📱 Vị trí iPhone', { permanent: false, direction: 'top' })
+                            .addTo(map);
+                        showToast(`📍 Vị trí iPhone: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
+                    }
+                }
+            }).catch(() => {});
+        }
     }
 
     setInterval(refreshDevices, 5000);
