@@ -19,91 +19,38 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function withAutoEnter(command) {
-    if (process.platform !== 'win32') return command;
-    return `cmd /d /s /c "echo.| ${command}"`;
-}
-
 function parseExecError(err) {
     const raw = [err?.stdout, err?.stderr, err?.message].filter(Boolean).join('\n');
     const text = normalizeCliText(raw);
     const lower = text.toLowerCase();
 
     if (lower.includes('requires admin privileges') || lower.includes('run-as administrator')) {
-        return 'Cần quyền Administrator. Hãy đóng app và mở lại bằng "Run as administrator".';
+        return 'Cần quyền Administrator cho tác vụ mạng cấp thấp.';
     }
     if (lower.includes('device is not connected')) {
-        return 'Thiết bị chưa kết nối ổn định. Hãy mở khóa iPhone, bấm Trust, rồi rút/cắm lại cáp USB.';
+        return 'Thiết bị chưa kết nối. Hãy mở khóa iPhone, bấm Trust và cắm lại cáp USB.';
     }
     if (lower.includes('connection was terminated abruptly')) {
-        return 'Kết nối tới iPhone bị ngắt đột ngột. Hãy mở khóa iPhone, giữ màn hình sáng và thử lại.';
+        return 'Kết nối tới iPhone bị ngắt. Hãy giữ màn hình sáng và kiểm tra cáp.';
     }
     if (lower.includes("'number': 183") || lower.includes('number: 183')) {
-        return 'Không thể ghi pair record (Mux 183). Hãy chạy app bằng Administrator, mở khóa iPhone và bấm Trust lại.';
+        return 'Lỗi ghép cặp iPhone (Mux 183). Hãy mở khóa iPhone và chọn Trust lại.';
     }
-    return text || 'Lỗi không xác định từ công cụ dòng lệnh.';
+    return text || 'Lỗi không xác định.';
 }
 
-async function listUsbMuxDevices(py) {
-    try {
-        const { stdout } = await execAsync(`${py} -m pymobiledevice3 --no-color usbmux list --usb --simple`, { timeout: 6000 });
-        const raw = String(stdout || '').trim();
-        if (!raw) return [];
-
-        // New pymobiledevice3 returns JSON array even in --simple mode.
-        if (raw.startsWith('[')) {
-            try {
-                const arr = JSON.parse(raw);
-                if (Array.isArray(arr)) {
-                    return arr
-                        .map(v => String(v).trim())
-                        .filter(v => /^[0-9a-fA-F-]{24,}$/.test(v));
-                }
-            } catch { }
-        }
-
-        return raw
-            .split(/\r?\n/)
-            .map(line => line.replace(/[",\[\]]/g, '').trim())
-            .filter(line => /^[0-9a-fA-F-]{24,}$/.test(line));
-    } catch (e) {
-        logDebug(`listUsbMuxDevices failed: ${parseExecError(e)}`);
-        return [];
-    }
-}
-
+// Zero-Admin: Modern pymobiledevice3 userspace tunnel needs 0 elevated privileges
 async function isWindowsAdmin() {
-    if (process.platform !== 'win32') return true;
-    try {
-        const cmd = 'powershell -NoProfile -Command "[Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent() | ForEach-Object { $_.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }"';
-        const { stdout } = await execAsync(cmd, { timeout: 4000 });
-        return String(stdout).trim().toLowerCase().includes('true');
-    } catch {
-        return false;
-    }
-}
-
-async function relaunchAsAdmin() {
-    if (process.platform !== 'win32') return false;
-    try {
-        const args = process.argv.slice(1).map(a => `"${String(a).replace(/"/g, '\\"')}"`).join(', ');
-        const psCommand = `Start-Process -FilePath "${process.execPath}" -ArgumentList ${args ? `@(${args})` : '@()'} -Verb RunAs`;
-        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${psCommand}"`, { timeout: 10000 });
-        return true;
-    } catch (e) {
-        logDebug(`relaunchAsAdmin failed: ${parseExecError(e)}`);
-        return false;
-    }
+    return true;
 }
 
 let mainWindow;
-let tunneldProc = null;
 
-// ─── Persistent Tunnel State ───────────────────────────────────────────────
+// ─── Persistent Tunnel State (Mirrored to renderer) ─────────────────────────
 let pTunnel = {
     proc: null,
-    host: null,
-    port: null,
+    host: 'userspace',
+    port: 0,
     udid: null,
     py: null,
     status: 'idle', // 'idle' | 'connecting' | 'ready' | 'error'
@@ -120,13 +67,14 @@ function getPTunnelStatus() {
     };
 }
 
-// ─── Location Worker (Python persistent process) ───────────────────────────────────
+// ─── Location Worker (Python persistent userspace process) ───────────────────
 let lWorker = {
     proc: null,
     status: 'idle', // 'idle' | 'starting' | 'ready' | 'error'
     buf: '',
     pending: null, // { resolve, reject, timer }
-    failCount: 0,  // consecutive failures
+    failCount: 0,
+    udid: null,
 };
 
 function teardownLocationWorker() {
@@ -145,19 +93,23 @@ function teardownLocationWorker() {
     logDebug('Location worker torn down.');
 }
 
-function startLocationWorker(py, host, port) {
-    // Stop retrying if worker consistently fails (wrong API/env)
-    if (lWorker.failCount >= 3) {
-        logDebug('Worker disabled after 3 consecutive failures.');
+function startLocationWorker(py, target, port) {
+    if (lWorker.failCount >= 5) {
+        logDebug('Worker disabled after repeated failures.');
         return Promise.resolve({ ok: false, error: 'Worker disabled after repeated failures' });
     }
     teardownLocationWorker();
     lWorker.status = 'starting';
+    lWorker.udid = (!port && target && target !== 'auto') ? target : null;
     const script = path.join(__dirname, 'location_worker.py');
-    logDebug(`Starting worker (attempt, fails so far=${lWorker.failCount}): ${py} ${script} ${host} ${port}`);
+    const args = [script];
+    if (target && target !== 'auto') args.push(String(target));
+    if (port) args.push(String(port));
+
+    logDebug(`Starting worker: ${py} ${args.join(' ')}`);
 
     return new Promise((resolve) => {
-        const proc = spawn(py, [script, String(host), String(port)], { windowsHide: true });
+        const proc = spawn(py, args, { windowsHide: true });
         lWorker.proc = proc;
         let resolved = false;
 
@@ -180,18 +132,26 @@ function startLocationWorker(py, host, port) {
 
                 if (msg.status === 'ready' && !resolved) {
                     lWorker.status = 'ready';
-                    lWorker.failCount = 0; // reset on success
-                    logDebug('Location worker READY ⚡');
-                    if (mainWindow && !mainWindow.isDestroyed())
+                    lWorker.failCount = 0;
+                    pTunnel.status = 'ready';
+                    pTunnel.error = null;
+                    logDebug(`Location worker READY ⚡ [mode=${msg.mode || 'userspace'}]`);
+                    if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('worker-ready', {});
+                        mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
+                    }
                     finish(true);
                 } else if (msg.error && !resolved) {
                     lWorker.status = 'error';
                     lWorker.failCount += 1;
+                    pTunnel.status = 'error';
+                    pTunnel.error = msg.error;
                     logDebug(`Worker failed (failCount=${lWorker.failCount}): ${msg.error}`);
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
+                    }
                     finish(false, msg.error);
                 } else if (lWorker.pending) {
-                    // Response to a setLocation call
                     const p = lWorker.pending;
                     lWorker.pending = null;
                     clearTimeout(p.timer);
@@ -205,6 +165,8 @@ function startLocationWorker(py, host, port) {
         proc.on('close', (code) => {
             logDebug(`Worker closed (code ${code})`);
             lWorker.status = 'error';
+            pTunnel.status = 'error';
+            pTunnel.error = `Worker đóng (code ${code})`;
             if (lWorker.pending) {
                 const p = lWorker.pending;
                 lWorker.pending = null;
@@ -219,6 +181,8 @@ function startLocationWorker(py, host, port) {
         setTimeout(() => {
             if (!resolved) {
                 lWorker.status = 'error';
+                pTunnel.status = 'error';
+                pTunnel.error = 'Worker timeout khi khởi động';
                 finish(false, 'Worker startup timeout');
             }
         }, 25000);
@@ -229,7 +193,6 @@ function setLocationViaWorker(lat, lng) {
     return new Promise((resolve, reject) => {
         if (lWorker.status !== 'ready' || !lWorker.proc || lWorker.proc.killed)
             return reject(new Error('Worker not ready'));
-        // Supersede any in-flight keepAlive
         if (lWorker.pending) {
             clearTimeout(lWorker.pending.timer);
             lWorker.pending.reject(new Error('Superseded'));
@@ -253,7 +216,6 @@ function setLocationViaWorker(lat, lng) {
     });
 }
 
-// Send any one-shot command to the worker and await a single JSON response line.
 function sendWorkerCommand(cmd, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
         if (lWorker.status !== 'ready' || !lWorker.proc || lWorker.proc.killed)
@@ -282,80 +244,15 @@ function sendWorkerCommand(cmd, timeoutMs = 5000) {
 
 function teardownPTunnel() {
     teardownLocationWorker();
-    if (pTunnel.proc && !pTunnel.proc.killed) {
-        try { pTunnel.proc.kill(); } catch {}
-    }
-    pTunnel.proc = null;
-    pTunnel.host = null;
-    pTunnel.port = null;
     pTunnel.status = 'idle';
     pTunnel.error = null;
     logDebug('Persistent tunnel torn down.');
 }
 
-function tryStartTunnelProc(py, udid, mode, includeUdid) {
-    return new Promise((resolve) => {
-        const args = ['-m', 'pymobiledevice3', '--no-color'];
-        if (mode === 'lockdown') {
-            args.push('lockdown', 'start-tunnel');
-        } else {
-            args.push('remote', 'start-tunnel', '--script-mode', '--connection-type', 'usb', '--protocol', 'tcp');
-        }
-        if (includeUdid && udid && udid !== 'auto') args.push('--udid', udid);
-
-        logDebug(`tryStartTunnelProc [${mode},uid=${includeUdid}]: ${py} ${args.join(' ')}`);
-        const proc = spawn(py, args, { windowsHide: true });
-        let resolved = false;
-        let buf = '';
-
-        const finish = (result) => {
-            if (resolved) return;
-            resolved = true;
-            if (!result.ok && !proc.killed) try { proc.kill(); } catch {}
-            resolve(result);
-        };
-
-        proc.stdout.on('data', (data) => {
-            const str = data.toString();
-            buf += str;
-            logDebug(`tunnel[${mode}] stdout: ${str.trim()}`);
-            const clean = normalizeCliText(buf);
-            const jm = clean.match(/"host"\s*:\s*"([^"]+)"[\s\S]*?"port"\s*:\s*(\d+)/i);
-            const rm = clean.match(/RSD Address:\s*([^\s\r\n]+)/i);
-            const rp = clean.match(/RSD Port:\s*(\d+)/i);
-            const pm = clean.match(/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s+(\d+)/);
-            const host = jm?.[1] || rm?.[1] || pm?.[1];
-            const port = jm?.[2] || rp?.[1] || pm?.[2];
-            if (host && port) finish({ ok: true, host, port, proc });
-        });
-
-        proc.stderr.on('data', (data) => {
-            const str = data.toString();
-            buf += str;
-            logDebug(`tunnel[${mode}] stderr: ${str.trim()}`);
-            if (str.includes('requires admin privileges'))
-                finish({ ok: false, error: 'Cần quyền Administrator.', reason: 'admin' });
-        });
-
-        proc.on('close', (code) => {
-            logDebug(`tunnel[${mode}] closed code=${code}`);
-            if (!resolved) finish({ ok: false, error: `Tunnel [${mode}] đóng (code ${code})`, reason: 'closed' });
-        });
-
-        setTimeout(() => finish({ ok: false, error: `Timeout tunnel [${mode}]`, reason: 'timeout' }), 18000);
-    });
-}
-
 async function setupPersistentTunnel(py, udid) {
-    // Reuse existing ready tunnel for same device
-    if (
-        pTunnel.status === 'ready' &&
-        pTunnel.udid === udid &&
-        pTunnel.py === py &&
-        pTunnel.proc && !pTunnel.proc.killed && pTunnel.proc.exitCode === null
-    ) {
-        logDebug(`Reusing existing tunnel ${pTunnel.host}:${pTunnel.port}`);
-        return { ok: true, host: pTunnel.host, port: pTunnel.port, reused: true };
+    if (lWorker.status === 'ready' && lWorker.proc && !lWorker.proc.killed && (!udid || lWorker.udid === udid)) {
+        logDebug('Reusing existing ready userspace worker');
+        return { ok: true, host: 'userspace', port: 0, reused: true };
     }
 
     teardownPTunnel();
@@ -366,141 +263,68 @@ async function setupPersistentTunnel(py, udid) {
     if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
 
-    const modes = [
-        { mode: 'lockdown', includeUdid: true },
-        { mode: 'lockdown', includeUdid: false },
-        { mode: 'remote',   includeUdid: true },
-        { mode: 'remote',   includeUdid: false },
-    ];
-
-    for (const { mode, includeUdid } of modes) {
-        if (includeUdid && (!udid || udid === 'auto')) continue;
-        const res = await tryStartTunnelProc(py, udid, mode, includeUdid);
-        if (res.ok) {
-            pTunnel.proc = res.proc;
-            pTunnel.host = res.host;
-            pTunnel.port = res.port;
-            pTunnel.status = 'ready';
-            pTunnel.error = null;
-            logDebug(`Persistent tunnel READY: ${res.host}:${res.port} via ${mode}`);
-
-            // Auto-start Python worker (fire-and-forget)
-            startLocationWorker(py, res.host, res.port).then(r => {
-                logDebug(`Worker start: ok=${r.ok} err=${r.error || ''}`);
-            });
-
-            // Watch for unexpected death
-            res.proc.on('close', (code) => {
-                if (pTunnel.proc === res.proc) {
-                    logDebug(`Persistent tunnel died (code ${code})`);
-                    pTunnel.status = 'error';
-                    pTunnel.error = `Tunnel thoát bất ngờ (code ${code})`;
-                    pTunnel.host = null;
-                    pTunnel.port = null;
-                }
-                if (mainWindow && !mainWindow.isDestroyed())
-                    mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
-            });
-
-            if (mainWindow && !mainWindow.isDestroyed())
-                mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
-
-            return { ok: true, host: res.host, port: res.port };
-        }
-        if (res.reason === 'admin') {
-            pTunnel.status = 'error';
-            pTunnel.error = res.error;
-            if (mainWindow && !mainWindow.isDestroyed())
-                mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
-            return { ok: false, error: res.error, reason: 'admin' };
-        }
+    // 1. Direct Userspace Worker connection (NO ADMIN REQUIRED!)
+    const targetUdid = (udid && udid !== 'auto') ? udid : '';
+    const res = await startLocationWorker(py, targetUdid);
+    if (res.ok) {
+        pTunnel.status = 'ready';
+        pTunnel.host = 'userspace';
+        pTunnel.port = 0;
+        pTunnel.error = null;
+        logDebug(`Userspace worker ready for ${udid || 'auto'}!`);
+        if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
+        return { ok: true, host: 'userspace', port: 0 };
     }
 
     pTunnel.status = 'error';
-    pTunnel.error = 'Không thể khởi tạo tunnel';
+    pTunnel.error = res.error || 'Không thể kết nối tới iPhone';
     if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
-    return { ok: false, error: 'Không thể khởi tạo tunnel tới iPhone.' };
+    return { ok: false, error: pTunnel.error };
 }
 
 function createWindow() {
+    logDebug('createWindow() invoked');
     mainWindow = new BrowserWindow({
-        width: 1280,
-        height: 800,
-        minWidth: 900,
-        minHeight: 600,
+        title: 'iOS GPS Pro by BraveHoang',
+        width: 1320,
+        height: 840,
+        minWidth: 960,
+        minHeight: 640,
+        center: true,
+        show: true,
         frame: false,
-        backgroundColor: '#0f172a',
+        backgroundColor: '#060b18',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
         },
-        icon: path.join(__dirname, 'icon.png'),
-        titleBarStyle: 'hidden',
+        icon: path.join(__dirname, 'iconapp.png'),
     });
 
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-    // mainWindow.webContents.openDevTools(); // uncomment for debug
-}
 
-async function ensureTunneld(py) {
-    if (tunneldProc && !tunneldProc.killed && tunneldProc.exitCode === null) {
-        return true;
-    }
+    mainWindow.show();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.focus();
+    setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.setAlwaysOnTop(false);
+        }
+    }, 1500);
 
-    return new Promise((resolve) => {
-        logDebug('Starting background tunneld process...');
-        const proc = spawn(py, ['-m', 'pymobiledevice3', '--no-color', 'remote', 'tunneld'], { windowsHide: true });
-        tunneldProc = proc;
-        let resolved = false;
-        let output = '';
+    mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
+        logDebug(`did-fail-load: ${desc}`);
+    });
 
-        const finish = (ok) => {
-            if (resolved) return;
-            resolved = true;
-            resolve(ok);
-        };
-
-        proc.stdout.on('data', (d) => {
-            const s = d.toString();
-            output += s;
-            logDebug(`tunneld stdout: ${s.trim()}`);
-        });
-        proc.stderr.on('data', (d) => {
-            const s = d.toString();
-            output += s;
-            logDebug(`tunneld stderr: ${s.trim()}`);
-        });
-        proc.on('close', (code) => {
-            logDebug(`tunneld closed with code ${code}`);
-            if (!resolved) finish(false);
-        });
-
-        setTimeout(() => {
-            if (proc.exitCode === null) {
-                logDebug('tunneld appears running.');
-                finish(true);
-            } else {
-                logDebug(`tunneld failed to stay running. output=${normalizeCliText(output)}`);
-                finish(false);
-            }
-        }, 2500);
+    mainWindow.webContents.on('render-process-gone', (e, details) => {
+        logDebug(`render-process-gone: ${JSON.stringify(details)}`);
     });
 }
 
 app.whenReady().then(async () => {
-    if (process.platform === 'win32') {
-        const admin = await isWindowsAdmin();
-        if (!admin && !process.argv.includes('--elevated-relaunch')) {
-            const relaunched = await relaunchAsAdmin();
-            if (relaunched) {
-                app.quit();
-                return;
-            }
-        }
-    }
-
     createWindow();
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -519,42 +343,17 @@ ipcMain.on('win-maximize', () => {
 });
 ipcMain.on('win-close', () => mainWindow?.close());
 
-// ─── Detect available tool ─────────────────────────────────────────────────
-async function detectTool() {
-    // 1. idevicesetlocation (libimobiledevice)
-    try {
-        await execAsync('idevicesetlocation --help', { timeout: 3000 });
-        return 'idevicesetlocation';
-    } catch { }
-
-    // Check bundled binary
-    const bundled = path.join(__dirname, 'bin', 'idevicesetlocation.exe');
-    const fs = require('fs');
-    if (fs.existsSync(bundled)) return 'bundled';
-
-    // 2. pymobiledevice3
-    try {
-        await execAsync('python -m pymobiledevice3 --help', { timeout: 5000 });
-        return 'pymobiledevice3';
-    } catch { }
-
-    try {
-        await execAsync('python3 -m pymobiledevice3 --help', { timeout: 5000 });
-        return 'pymobiledevice3-3';
-    } catch { }
-
-    return null;
-}
-
-// ─── Auto-install pymobiledevice3 ────────────────────────────────────────────
+// ─── Python & Tool Detection ───────────────────────────────────────────────
 async function getPythonCmd() {
     const cmds = ['python', 'python3', 'py'];
-    
+
     if (process.platform === 'win32') {
         const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE + '\\AppData\\Local');
-        for (let minor = 13; minor >= 10; minor--) {
+        for (let minor = 14; minor >= 10; minor--) {
             cmds.push(`${localAppData}\\Programs\\Python\\Python3${minor}\\python.exe`);
         }
+        cmds.push('C:\\Program Files\\Python314\\python.exe');
+        cmds.push('C:\\Program Files\\Python313\\python.exe');
         cmds.push('C:\\Program Files\\Python312\\python.exe');
         cmds.push('C:\\Program Files\\Python311\\python.exe');
     }
@@ -562,11 +361,42 @@ async function getPythonCmd() {
     for (const cmd of cmds) {
         try {
             const { stdout } = await execAsync(`"${cmd}" --version`, { timeout: 3000 });
-            if (stdout.includes('Python') || (await execAsync(`"${cmd}" --version 2>&1`)).stderr?.includes('Python')) {
+            if (stdout.includes('Python')) {
                 return cmd;
             }
         } catch { }
     }
+    return null;
+}
+
+async function detectTool() {
+    const py = await getPythonCmd();
+    if (py) {
+        try {
+            await execAsync(`"${py}" -c "import pymobiledevice3"`, { timeout: 15000 });
+            return 'pymobiledevice3';
+        } catch { }
+    }
+
+    try {
+        await execAsync('python -c "import pymobiledevice3"', { timeout: 15000 });
+        return 'pymobiledevice3';
+    } catch { }
+
+    try {
+        await execAsync('python3 -c "import pymobiledevice3"', { timeout: 15000 });
+        return 'pymobiledevice3-3';
+    } catch { }
+
+    // Fallback: bundled or idevicesetlocation
+    const bundled = path.join(__dirname, 'bin', 'idevicesetlocation.exe');
+    if (fs.existsSync(bundled)) return 'bundled';
+
+    try {
+        await execAsync('idevicesetlocation --help', { timeout: 3000 });
+        return 'idevicesetlocation';
+    } catch { }
+
     return null;
 }
 
@@ -580,11 +410,11 @@ async function installTool(win) {
         let output = '';
         proc.stdout.on('data', d => {
             output += d.toString();
-            win.webContents.send('install-progress', d.toString());
+            win?.webContents?.send('install-progress', d.toString());
         });
         proc.stderr.on('data', d => {
             output += d.toString();
-            win.webContents.send('install-progress', d.toString());
+            win?.webContents?.send('install-progress', d.toString());
         });
         proc.on('close', code => {
             resolve({ ok: code === 0, output, code });
@@ -592,6 +422,7 @@ async function installTool(win) {
     });
 }
 
+// ─── Device Detection ──────────────────────────────────────────────────────
 async function getDevices() {
     const devices = [];
     const seenUdids = new Set();
@@ -602,503 +433,122 @@ async function getDevices() {
         devices.push({ ...device, udid });
     };
 
-    // Method 1: idevice_id (libimobiledevice)
-    try {
-        const { stdout } = await execAsync('idevice_id -l', { timeout: 4000 });
-        const lines = stdout.trim().split('\n').filter(Boolean);
-        for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            const udid = parts[0];
-            const connType = parts[1] ? (parts[1].toLowerCase().includes('network') ? 'WiFi' : 'USB') : 'USB';
-            let name = 'iPhone';
-            try {
-                const { stdout: info } = await execAsync(`ideviceinfo -u ${udid} -k DeviceName`, { timeout: 3000 });
-                name = info.trim() || 'iPhone';
-            } catch { }
-            pushUniqueDevice({ udid, name, connectionType: connType, source: 'idevice_id' });
-        }
-        if (devices.length) return devices;
-    } catch { }
-
-    // Method 2: pymobiledevice3 usbmux list (full JSON — has ConnectionType, DeviceName)
+    // Method 1: pymobiledevice3 usbmux list
     try {
         const py = await getPythonCmd();
         if (py) {
-            // Try full JSON list first (has ConnectionType + product info)
             try {
-                const { stdout } = await execAsync(
-                    `${py} -m pymobiledevice3 --no-color usbmux list`,
-                    { timeout: 7000 }
-                );
+                const { stdout } = await execAsync(`"${py}" -m pymobiledevice3 --no-color usbmux list`, { timeout: 8000 });
                 const raw = normalizeCliText(stdout || '').trim();
-                // May be a JSON array of device objects
                 const jsonStart = raw.indexOf('[');
                 if (jsonStart !== -1) {
                     const arr = JSON.parse(raw.slice(jsonStart));
                     if (Array.isArray(arr)) {
                         for (const item of arr) {
-                            const udid = item?.SerialNumber || item?.udid || item?.UDID || '';
+                            const udid = item?.UniqueDeviceID || item?.Identifier || item?.SerialNumber || item?.udid || '';
                             if (!udid || !/^[0-9a-fA-F-]{8,}/.test(udid)) continue;
                             const connType = String(item?.ConnectionType || 'USB').includes('Network') ? 'WiFi' : 'USB';
-                            const name = item?.DeviceName || item?.ProductType || 'iPhone';
+                            const name = item?.DeviceName || 'iPhone';
                             const model = item?.ProductType || '';
-                            pushUniqueDevice({ udid, name, connectionType: connType, model, source: 'pymobiledevice3-full' });
+                            const version = item?.ProductVersion || '';
+                            pushUniqueDevice({ udid, name, connectionType: connType, model, version, source: 'pymobiledevice3' });
                         }
                     }
                 }
-                if (devices.length) return devices;
-            } catch { }
-
-            // Fallback: simple UDID list
-            const fallbackUdids = await listUsbMuxDevices(py);
-            fallbackUdids.forEach(udid =>
-                pushUniqueDevice({ udid, name: 'iPhone', connectionType: 'USB', model: '', source: 'pymobiledevice3-simple' })
-            );
+            } catch (e) {
+                logDebug(`usbmux list error: ${e.message}`);
+            }
         }
     } catch { }
+
+    // Method 2: idevice_id fallback
+    if (!devices.length) {
+        try {
+            const { stdout } = await execAsync('idevice_id -l', { timeout: 3000 });
+            const lines = stdout.trim().split('\n').filter(Boolean);
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                const udid = parts[0];
+                const connType = parts[1] && parts[1].toLowerCase().includes('network') ? 'WiFi' : 'USB';
+                pushUniqueDevice({ udid, name: 'iPhone', connectionType: connType, source: 'idevice_id' });
+            }
+        } catch { }
+    }
 
     return devices;
 }
 
-// ─── Set location ──────────────────────────────────────────────────────────
+// ─── Set Location ──────────────────────────────────────────────────────────
 async function setLocation(lat, lng, udid) {
-    const tool = await detectTool();
+    const py = await getPythonCmd();
+    if (!py) return { ok: false, error: 'Không tìm thấy Python.' };
 
-    if (tool === 'pymobiledevice3' || tool === 'pymobiledevice3-3') {
-        const py = tool === 'pymobiledevice3-3' ? 'python3' : 'python';
-
-        if (process.platform === 'win32') {
-            const admin = await isWindowsAdmin();
-            if (!admin) return { ok: false, error: 'Ứng dụng chưa chạy quyền Administrator. Hãy đóng app và mở lại bằng Run as administrator.' };
-        }
-
-        // ── FASTEST PATH: Python worker (persistent DVT connection, ~100ms) ────
-        if (lWorker.status === 'ready' && lWorker.proc && !lWorker.proc.killed) {
-            logDebug(`Worker path → ${lat},${lng}`);
-            try {
-                const res = await setLocationViaWorker(lat, lng);
-                if (res.ok) return { ok: true, method: 'worker', output: '' };
-                logDebug(`Worker error: ${res.error} — falling back`);
-                lWorker.status = 'error';
-            } catch (e) {
-                logDebug(`Worker exception: ${e.message} — falling back`);
-                lWorker.status = 'error';
-            }
-        }
-
-        // ── FAST PATH: reuse tunnel, spawn only simulate-location cmd (~1.5s) ──
-        const tunnelAlive =
-            pTunnel.status === 'ready' &&
-            pTunnel.host && pTunnel.port &&
-            pTunnel.proc && !pTunnel.proc.killed && pTunnel.proc.exitCode === null;
-
-        if (tunnelAlive) {
-            logDebug(`Tunnel exec path → rsd ${pTunnel.host}:${pTunnel.port} — ${lat},${lng}`);
-            const cmd = `${py} -m pymobiledevice3 --no-color developer dvt simulate-location set --rsd ${pTunnel.host} ${pTunnel.port} -- ${lat} ${lng}`;
-            try {
-                const { stdout, stderr } = await execAsync(withAutoEnter(cmd), { timeout: 12000 });
-                const out = stdout || stderr || '';
-                if (!out.includes('ERROR') && !out.includes('InvalidServiceError') && !out.includes('Traceback')) {
-                    // Worker died/never started — try restarting it
-                    if (lWorker.status !== 'starting')
-                        startLocationWorker(py, pTunnel.host, pTunnel.port);
-                    return { ok: true, method: 'fast-tunnel', output: out };
-                }
-                pTunnel.status = 'error';
-                pTunnel.error = 'Phản hồi lỗi từ tunnel';
-                if (mainWindow && !mainWindow.isDestroyed())
-                    mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
-            } catch (e) {
-                pTunnel.status = 'error';
-                pTunnel.error = parseExecError(e);
-                if (mainWindow && !mainWindow.isDestroyed())
-                    mainWindow.webContents.send('tunnel-status-changed', getPTunnelStatus());
-            }
+    // 1. FAST PATH: Worker already ready
+    if (lWorker.status === 'ready' && lWorker.proc && !lWorker.proc.killed) {
+        try {
+            const res = await setLocationViaWorker(lat, lng);
+            if (res.ok) return { ok: true, method: 'worker', output: '' };
+        } catch (e) {
+            logDebug(`Worker send error: ${e.message}`);
         }
     }
-    // Fall through to original slow-path logic below
-    return setLocationSlow(lat, lng, udid);
-}
 
-async function setLocationSlow(lat, lng, udid) {
-    const tool = await detectTool();
-
-    if (tool === 'idevicesetlocation' || tool === 'bundled') {
-        const bin = tool === 'bundled'
-            ? `"${path.join(__dirname, 'bin', 'idevicesetlocation.exe')}"`
-            : 'idevicesetlocation';
-        const udidFlag = udid ? `-u ${udid}` : '';
-        const cmd = `${bin} ${udidFlag} -- ${lat} ${lng}`;
+    // 2. Connect worker and retry
+    const tunnelRes = await setupPersistentTunnel(py, udid);
+    if (tunnelRes.ok && lWorker.status === 'ready') {
         try {
-            const { stdout, stderr } = await execAsync(cmd, { timeout: 10000 });
-            const out = stdout || stderr || '';
-            if (out.includes('ERROR') || out.includes('Failed')) return { ok: false, error: out };
-            return { ok: true, method: 'idevicesetlocation', output: out };
+            const res = await setLocationViaWorker(lat, lng);
+            if (res.ok) return { ok: true, method: 'worker', output: '' };
         } catch (e) {
             return { ok: false, error: e.message };
         }
     }
 
-    if (tool === 'pymobiledevice3' || tool === 'pymobiledevice3-3') {
-        const py = tool === 'pymobiledevice3-3' ? 'python3' : 'python';
+    // 3. Fallback to CLI command
+    try {
         const udidFlag = (udid && udid !== 'auto') ? `--udid ${udid}` : '';
-
-        logDebug(`--- Bắt đầu setLocation tới ${lat}, ${lng} ---`);
-
-        if (process.platform === 'win32') {
-            const admin = await isWindowsAdmin();
-            if (!admin) {
-                logDebug('Abort setLocation: process is not running as Administrator.');
-                return {
-                    ok: false,
-                    error: 'Ứng dụng chưa chạy quyền Administrator. Hãy đóng app và mở lại terminal bằng Run as administrator.'
-                };
-            }
-        }
-
-        const onlineUdids = await listUsbMuxDevices(py);
-        if (!onlineUdids.length) {
-            return {
-                ok: false,
-                error: 'Không thấy iPhone online qua USB. Hãy mở khóa máy, bấm Trust, rồi nhấn làm mới thiết bị.'
-            };
-        }
-        if (udid && udid !== 'auto' && !onlineUdids.includes(udid)) {
-            return {
-                ok: false,
-                error: 'Thiết bị đã chọn không còn online. Hãy chọn lại thiết bị rồi thử dịch chuyển lại.'
-            };
-        }
-
-        logDebug('Sử dụng tunnel mode cho pymobiledevice3.');
-
-        const runTunnelAttempt = (mode, includeUdid) => new Promise((resolve) => {
-            const args = ['-m', 'pymobiledevice3', '--no-color'];
-            if (mode === 'lockdown') {
-                args.push('lockdown', 'start-tunnel');
-            } else {
-                args.push('remote', 'start-tunnel', '--script-mode', '--connection-type', 'usb', '--protocol', 'tcp');
-            }
-            if (includeUdid && udid && udid !== 'auto') args.push('--udid', udid);
-
-            logDebug(`Spawn ${mode} start-tunnel: ${py} ${args.join(' ')}`);
-            const tunnelProc = spawn(py, args);
-            let resolved = false;
-            let output = '';
-            let tunnelBuffer = '';
-
-            const tryResolveTunnel = async (text) => {
-                if (resolved) return false;
-                const clean = normalizeCliText(text);
-                const jsonMatch = clean.match(/"host"\s*:\s*"([^"]+)"[\s\S]*?"port"\s*:\s*(\d+)/i);
-                const pairMatch = clean.match(/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s+(\d+)/);
-                const rsdHostMatch = clean.match(/RSD Address:\s*([^\s\r\n]+)/i);
-                const rsdPortMatch = clean.match(/RSD Port:\s*(\d+)/i);
-                const host = jsonMatch?.[1] || pairMatch?.[1] || rsdHostMatch?.[1];
-                const port = jsonMatch?.[2] || pairMatch?.[2] || rsdPortMatch?.[1];
-                if (!host || !port) return false;
-                resolved = true;
-                try {
-                    // Tunnel may report ready slightly before the virtual route is usable on Windows.
-                    await delay(1500);
-                    let lastErr = '';
-                    let ok = false;
-                    for (let attempt = 1; attempt <= 3; attempt++) {
-                        const cmd17 = `${py} -m pymobiledevice3 --no-color developer dvt simulate-location set --rsd ${host} ${port} -- ${lat} ${lng}`;
-                        logDebug(`Chạy cmd17 (attempt ${attempt}/3): ${cmd17}`);
-                        try {
-                            const { stdout, stderr } = await execAsync(withAutoEnter(cmd17), { timeout: 20000 });
-                            const out17 = stdout || stderr || '';
-                            logDebug(`cmd17 output (attempt ${attempt}):\n${out17}`);
-                            if (!out17.includes('ERROR') && !out17.includes('InvalidServiceError') && !out17.includes('Traceback')) {
-                                resolve({ ok: true, method: 'pymobiledevice3 (tunnel)', output: out17 });
-                                ok = true;
-                                break;
-                            }
-                            lastErr = out17 || 'Unknown DVT error';
-                        } catch (e) {
-                            const errText = parseExecError(e);
-                            const errRaw = normalizeCliText([e?.stdout, e?.stderr, e?.message].filter(Boolean).join('\n'));
-                            lastErr = errRaw || errText;
-                            logDebug(`cmd17 catch error (attempt ${attempt}): ${lastErr}`);
-                        }
-                        await delay(1200);
-                    }
-                    if (!ok) {
-                        const lowerErr = String(lastErr || '').toLowerCase();
-                        const isRouteIssue = lowerErr.includes('winerror 1231') || lowerErr.includes('network location cannot be reached') || lowerErr.includes('press enter to exit');
-
-                        if (isRouteIssue && udid && udid !== 'auto') {
-                            logDebug('RSD route issue detected, fallback to --tunnel mode...');
-                            const tunneldOk = await ensureTunneld(py);
-                            if (tunneldOk) {
-                                const cmdTunnel = `${py} -m pymobiledevice3 --no-color developer dvt simulate-location set --tunnel ${udid} -- ${lat} ${lng}`;
-                                logDebug(`Chạy fallback cmdTunnel: ${cmdTunnel}`);
-                                try {
-                                    const { stdout, stderr } = await execAsync(withAutoEnter(cmdTunnel), { timeout: 25000 });
-                                    const outTunnel = stdout || stderr || '';
-                                    logDebug(`cmdTunnel output:\n${outTunnel}`);
-                                    if (!outTunnel.includes('ERROR') && !outTunnel.includes('Traceback')) {
-                                        resolve({ ok: true, method: 'pymobiledevice3 (tunnel-daemon)', output: outTunnel });
-                                        return true;
-                                    }
-                                    lastErr = outTunnel || lastErr;
-                                } catch (e) {
-                                    const errText = normalizeCliText([e?.stdout, e?.stderr, e?.message].filter(Boolean).join('\n'));
-                                    logDebug(`cmdTunnel catch error: ${errText}`);
-                                    lastErr = errText || lastErr;
-                                }
-                            } else {
-                                logDebug('tunneld fallback unavailable.');
-                            }
-                        }
-
-                        resolve({ ok: false, error: 'Lỗi iOS 17: ' + (lastErr || 'Không thể set vị trí qua DVT.'), reason: 'cmd17_error' });
-                    }
-                } catch (e) {
-                    const errText = parseExecError(e);
-                    logDebug(`cmd17 catch error: ${errText}`);
-                    resolve({ ok: false, error: errText, reason: 'cmd17_exception' });
-                } finally {
-                    tunnelProc.kill();
-                }
-                return true;
-            };
-
-            tunnelProc.stdout.on('data', async (data) => {
-                const str = data.toString();
-                output += str;
-                tunnelBuffer += str;
-                logDebug(`tunnel stdout: ${str.trim()}`);
-                await tryResolveTunnel(tunnelBuffer);
-            });
-
-            tunnelProc.stderr.on('data', (data) => {
-                const str = data.toString();
-                output += str;
-                logDebug(`tunnel stderr: ${str.trim()}`);
-                if (str.includes('requires admin privileges') && !resolved) {
-                    resolved = true;
-                    resolve({ ok: false, error: 'Cần quyền Administrator. Vui lòng chạy app bằng Run as Administrator.', reason: 'admin' });
-                    tunnelProc.kill();
-                }
-            });
-
-            tunnelProc.on('close', (code) => {
-                logDebug(`tunnel closed with code ${code}`);
-                if (!resolved) {
-                    resolved = true;
-                    const text = normalizeCliText(output).toLowerCase();
-                    if (text.includes('requires admin privileges')) {
-                        resolve({ ok: false, error: 'Ứng dụng chưa chạy quyền Administrator. Hãy đóng app và mở lại terminal bằng Run as administrator.', reason: 'admin' });
-                        return;
-                    }
-                    if (text.includes('device is not connected')) {
-                        resolve({ ok: false, error: 'Thiết bị chưa kết nối ổn định. Hãy mở khóa iPhone, bấm Trust và cắm lại cáp.', reason: 'device_not_connected' });
-                        return;
-                    }
-                    if (text.includes('connection was terminated abruptly')) {
-                        resolve({ ok: false, error: 'Kết nối USB với iPhone bị ngắt đột ngột. Hãy đổi cáp/port USB và giữ máy mở khóa.', reason: 'connection_abrupt' });
-                        return;
-                    }
-                    resolve({ ok: false, error: 'Tunnel đóng đột ngột (code ' + code + '): ' + normalizeCliText(output), reason: 'tunnel_closed' });
-                }
-            });
-
-            setTimeout(() => {
-                if (!resolved) {
-                    resolved = true;
-                    resolve({ ok: false, error: 'Timeout kết nối Tunnel iOS 17+.', reason: 'timeout' });
-                    tunnelProc.kill();
-                }
-            }, 20000);
-        });
-
-        const attempts = [
-            { mode: 'lockdown', includeUdid: true },
-            { mode: 'lockdown', includeUdid: false },
-            { mode: 'remote', includeUdid: true },
-            { mode: 'remote', includeUdid: false },
-        ];
-
-        let lastResult = null;
-        for (const attempt of attempts) {
-            if (attempt.includeUdid && (!udid || udid === 'auto')) continue;
-            if (attempt.mode === 'remote' && attempt.includeUdid && udid && udid !== 'auto') {
-                logDebug('Retry remote tunnel with explicit UDID...');
-            }
-            if (attempt.mode === 'remote' && !attempt.includeUdid) {
-                logDebug('Retry remote tunnel without explicit UDID...');
-            }
-            if (attempt.mode === 'lockdown' && attempt.includeUdid) {
-                logDebug('Try lockdown tunnel with explicit UDID...');
-            }
-            if (attempt.mode === 'lockdown' && !attempt.includeUdid) {
-                logDebug('Retry lockdown tunnel without explicit UDID...');
-            }
-            const result = await runTunnelAttempt(attempt.mode, attempt.includeUdid);
-            lastResult = result;
-            if (result.ok) return result;
-            if (result.reason === 'admin') return result;
-        }
-        return lastResult || { ok: false, error: 'Không thể tạo tunnel tới iPhone.' };
+        const { stdout } = await execAsync(`"${py}" -m pymobiledevice3 --no-color developer dvt simulate-location set ${udidFlag} -- ${lat} ${lng}`, { timeout: 15000 });
+        return { ok: true, method: 'cli', output: stdout };
+    } catch (e) {
+        return { ok: false, error: parseExecError(e) };
     }
-
-    return {
-        ok: false,
-        error: 'no_tool',
-        message: 'Chưa cài đặt công cụ cần thiết. Xem hướng dẫn trong app.'
-    };
 }
 
-
-// ─── Reset location ────────────────────────────────────────────────────────
+// ─── Reset Location (Back to Real GPS) ───────────────────────────────────────
 async function resetLocation(udid) {
-    const tool = await detectTool();
-
-    if (tool === 'idevicesetlocation' || tool === 'bundled') {
-        const bin = tool === 'bundled'
-            ? `"${path.join(__dirname, 'bin', 'idevicesetlocation.exe')}"`
-            : 'idevicesetlocation';
-        const udidFlag = udid ? `-u ${udid}` : '';
-        const cmd = `${bin} ${udidFlag} -- 0 0`;
-        await execAsync(cmd, { timeout: 10000 });
-        return { ok: true };
-    }
-
-    if (tool?.startsWith('pymobiledevice3')) {
-        const py = tool === 'pymobiledevice3-3' ? 'python3' : 'python';
-        const udidFlag = (udid && udid !== 'auto') ? `--udid ${udid}` : '';
-
-        if (process.platform === 'win32') {
-            const admin = await isWindowsAdmin();
-            if (!admin) return { ok: false, error: 'Ứng dụng chưa chạy quyền Administrator.' };
-        }
-        
-        // Thử iOS 16
+    if (lWorker.status === 'ready' && lWorker.proc && !lWorker.proc.killed) {
         try {
-            await execAsync(`${py} -m pymobiledevice3 developer simulate-location clear ${udidFlag}`);
-        } catch(e) {}
-        
-        // Thử iOS 17+ qua tunnel
-        return new Promise((resolve) => {
-            const args = ['-m', 'pymobiledevice3', 'remote', 'start-tunnel', '--script-mode'];
-            if (udid && udid !== 'auto') args.push('--udid', udid);
-
-            const tunnelProc = spawn(py, args);
-            let resolved = false;
-
-            tunnelProc.stdout.on('data', async (data) => {
-                const match = data.toString().match(/([0-9\.]+)\s+(\d+)/);
-                if (match && !resolved) {
-                    resolved = true;
-                    try {
-                        await execAsync(`${py} -m pymobiledevice3 developer dvt simulate-location clear --rsd ${match[1]} ${match[2]} ${udidFlag}`);
-                    } catch (e) {} finally {
-                        tunnelProc.kill();
-                        resolve({ ok: true }); // Bỏ qua lỗi reset
-                    }
-                }
-            });
-
-            tunnelProc.stderr.on('data', (data) => {
-                if (data.toString().includes('requires admin privileges') && !resolved) {
-                    resolved = true;
-                    resolve({ ok: false, error: 'Cần Run as Administrator.' });
-                    tunnelProc.kill();
-                }
-            });
-
-            setTimeout(() => {
-                if (!resolved) {
-                    resolved = true;
-                    resolve({ ok: false, error: 'Timeout' });
-                    tunnelProc.kill();
-                }
-            }, 10000);
-        });
+            await sendWorkerCommand('clear', 5000);
+            logDebug('Cleared location via worker');
+            return { ok: true, method: 'worker-clear' };
+        } catch (e) {
+            logDebug(`Worker clear error: ${e.message}`);
+        }
     }
 
-    return { ok: false };
+    const py = await getPythonCmd();
+    if (py) {
+        try {
+            const udidFlag = (udid && udid !== 'auto') ? `--udid ${udid}` : '';
+            await execAsync(`"${py}" -m pymobiledevice3 --no-color developer dvt simulate-location clear ${udidFlag}`, { timeout: 8000 });
+            return { ok: true, method: 'cli-dvt' };
+        } catch {}
+        try {
+            const udidFlag = (udid && udid !== 'auto') ? `--udid ${udid}` : '';
+            await execAsync(`"${py}" -m pymobiledevice3 developer simulate-location clear ${udidFlag}`, { timeout: 8000 });
+            return { ok: true, method: 'cli-lockdown' };
+        } catch {}
+    }
+    return { ok: true };
 }
 
+// ─── IPC Handlers ──────────────────────────────────────────────────────────
+ipcMain.handle('check-admin', async () => true);
 
-
-// ─── IPC handlers ──────────────────────────────────────────────────────────
-ipcMain.handle('check-admin', async () => {
-    return await isWindowsAdmin();
-});
-
-// Get current iPhone GPS location via worker
 ipcMain.handle('get-iphone-location', async () => {
     try {
         const result = await sendWorkerCommand('get-location', 5000);
         return result;
-    } catch (e) {
-        return { ok: false, error: e.message };
-    }
-});
-
-ipcMain.handle('install-tool', async () => {
-    try { return await installTool(mainWindow); }
-    catch (e) { return { ok: false, message: e.message }; }
-});
-
-ipcMain.handle('get-python', async () => {
-    const py = await getPythonCmd();
-    return { py };
-});
-
-ipcMain.handle('install-python', async () => {
-    return new Promise((resolve) => {
-        const https = require('https');
-        const fs = require('fs');
-        const url = 'https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe';
-        const installerPath = path.join(app.getPath('temp'), 'python-installer.exe');
-        
-        mainWindow.webContents.send('install-python-progress', 'Đang tải Python installer...\n');
-        
-        const file = fs.createWriteStream(installerPath);
-        https.get(url, (response) => {
-            if (response.statusCode !== 200) {
-                mainWindow.webContents.send('install-python-progress', `\nLỗi tải: HTTP ${response.statusCode}`);
-                resolve({ ok: false, error: `HTTP ${response.statusCode}` });
-                return;
-            }
-            response.pipe(file);
-            file.on('finish', () => {
-                file.close();
-                mainWindow.webContents.send('install-python-progress', 'Tải xong, đang cài đặt ngầm (có thể mất vài phút)...\n');
-                
-                const proc = spawn(installerPath, ['/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_test=0'], { windowsHide: true });
-                proc.on('close', code => {
-                    if (code === 0) {
-                        mainWindow.webContents.send('install-python-progress', '✅ Cài đặt thành công!\n');
-                        resolve({ ok: true });
-                    } else {
-                        mainWindow.webContents.send('install-python-progress', `❌ Lỗi cài đặt (code: ${code}).\n`);
-                        resolve({ ok: false, error: `Installer exited with code ${code}` });
-                    }
-                });
-            });
-        }).on('error', (err) => {
-            fs.unlink(installerPath, () => {});
-            mainWindow.webContents.send('install-python-progress', `❌ Lỗi tải file: ${err.message}\n`);
-            resolve({ ok: false, error: err.message });
-        });
-    });
-});
-
-ipcMain.handle('scan-wifi', async () => {
-    const py = await getPythonCmd();
-    if (!py) return { ok: false, error: 'Chưa tìm thấy Python.' };
-    try {
-        const { stdout } = await execAsync(`${py} -m pymobiledevice3 remote browse --timeout 2`, { timeout: 12000 });
-        const clean = normalizeCliText(stdout);
-        const start = clean.indexOf('{');
-        if (start === -1) return { ok: true, devices: [] };
-        const data = JSON.parse(clean.slice(start));
-        return { ok: true, devices: data.wifi || [] };
     } catch (e) {
         return { ok: false, error: e.message };
     }
@@ -1120,8 +570,7 @@ ipcMain.handle('get-devices', async () => {
 
 ipcMain.handle('set-location', async (_, { lat, lng, udid }) => {
     try {
-        const result = await setLocation(lat, lng, udid);
-        return result;
+        return await setLocation(lat, lng, udid);
     } catch (e) {
         return { ok: false, error: e.message };
     }
@@ -1135,8 +584,67 @@ ipcMain.handle('reset-location', async (_, { udid }) => {
     }
 });
 
+ipcMain.handle('install-tool', async () => {
+    return await installTool(mainWindow);
+});
 
+ipcMain.handle('install-python', async () => {
+    return new Promise((resolve) => {
+        const https = require('https');
+        const url = 'https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe';
+        const installerPath = path.join(app.getPath('temp'), 'python-installer.exe');
 
+        mainWindow?.webContents?.send('install-python-progress', 'Đang tải Python installer...\n');
+
+        const file = fs.createWriteStream(installerPath);
+        https.get(url, (response) => {
+            if (response.statusCode !== 200) {
+                mainWindow?.webContents?.send('install-python-progress', `\nLỗi tải: HTTP ${response.statusCode}`);
+                resolve({ ok: false, error: `HTTP ${response.statusCode}` });
+                return;
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close();
+                mainWindow?.webContents?.send('install-python-progress', 'Tải xong, đang cài đặt ngầm...\n');
+                const proc = spawn(installerPath, ['/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_test=0'], { windowsHide: true });
+                proc.on('close', code => {
+                    if (code === 0) {
+                        mainWindow?.webContents?.send('install-python-progress', '✅ Cài đặt thành công!\n');
+                        resolve({ ok: true });
+                    } else {
+                        mainWindow?.webContents?.send('install-python-progress', `❌ Lỗi cài đặt (code: ${code}).\n`);
+                        resolve({ ok: false, error: `Installer code ${code}` });
+                    }
+                });
+            });
+        }).on('error', (err) => {
+            fs.unlink(installerPath, () => {});
+            mainWindow?.webContents?.send('install-python-progress', `❌ Lỗi tải: ${err.message}\n`);
+            resolve({ ok: false, error: err.message });
+        });
+    });
+});
+
+ipcMain.handle('scan-wifi', async () => {
+    const py = await getPythonCmd();
+    if (!py) return { ok: false, error: 'Chưa tìm thấy Python.' };
+    try {
+        const { stdout } = await execAsync(`"${py}" -m pymobiledevice3 remote browse --timeout 2`, { timeout: 12000 });
+        const clean = normalizeCliText(stdout);
+        const start = clean.indexOf('{');
+        if (start === -1) return { ok: true, devices: [] };
+        const data = JSON.parse(clean.slice(start));
+        return { ok: true, devices: data.wifi || [] };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+});
+
+ipcMain.handle('get-python', async () => {
+    const py = await getPythonCmd();
+    return { py };
+});
 
 ipcMain.handle('open-url', async (_, url) => {
     await shell.openExternal(url);

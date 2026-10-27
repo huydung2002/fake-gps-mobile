@@ -4,10 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>iOS GPS by BraveHoang</title>
+    <title>iOS GPS Pro by BraveHoang</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -16,7 +16,7 @@
     <div id="titlebar">
         <div id="titlebar-left">
             <div id="app-icon">📍</div>
-            <span id="app-title">iOS GPS by BraveHoang</span>
+            <span id="app-title">iOS GPS Pro <span class="badge-zero-admin">Zero-Admin</span></span>
         </div>
         <div id="titlebar-drag"></div>
         <div id="titlebar-controls">
@@ -32,34 +32,25 @@
             <!-- Header -->
             <div id="wizard-header">
                 <div id="wizard-logo">📍</div>
-                <div id="wizard-title">Thiết lập iOS GPS by BraveHoang</div>
-                <div id="wizard-sub">Kiểm tra và cài đặt các thành phần cần thiết</div>
-            </div>
-
-            <!-- Admin warning -->
-            <div id="wizard-admin-warn" class="hidden">
-                <span>⚠️</span>
-                <span>App chưa được chạy bằng <strong>Run as Administrator</strong>. Một số tính năng có thể không hoạt động.</span>
+                <div id="wizard-title">Thiết lập iOS GPS Pro</div>
+                <div id="wizard-sub">Kết nối không cần quyền Administrator (Zero-Admin)</div>
             </div>
 
             <!-- Requirements -->
             <div id="wizard-reqs">
-
                 <!-- Req 1: Python -->
                 <div class="req-row" id="req-python">
                     <div class="req-icon" id="req-python-icon">⏳</div>
                     <div class="req-body">
-                        <div class="req-title">Python 3.x</div>
-                        <div class="req-desc" id="req-python-desc">Đang kiểm tra...</div>
-                        <!-- Progress bar for Python install -->
+                        <div class="req-title">Python Runtime</div>
+                        <div class="req-desc" id="req-python-desc">Đang kiểm tra môi trường...</div>
                         <div id="python-progress-wrap" class="hidden">
                             <div id="python-progress-bar"></div>
                         </div>
                         <div id="python-install-log" class="req-log hidden"></div>
                     </div>
                     <div class="req-action">
-                        <button class="req-btn hidden" id="btn-install-python"
-                            onclick="wizardInstallPython()">⚡ Cài tự động</button>
+                        <button class="req-btn hidden" id="btn-install-python" onclick="wizardInstallPython()">⚡ Cài tự động</button>
                     </div>
                 </div>
 
@@ -67,17 +58,15 @@
                 <div class="req-row" id="req-pmd">
                     <div class="req-icon" id="req-pmd-icon">⏳</div>
                     <div class="req-body">
-                        <div class="req-title">pymobiledevice3</div>
-                        <div class="req-desc" id="req-pmd-desc">Đang kiểm tra...</div>
-                        <!-- Progress bar for pip install -->
+                        <div class="req-title">Bộ điều khiển iOS (pymobiledevice3)</div>
+                        <div class="req-desc" id="req-pmd-desc">Đang kiểm tra thư viện...</div>
                         <div id="pmd-progress-wrap" class="hidden">
                             <div id="pmd-progress-bar"></div>
                         </div>
                         <div id="pmd-install-log" class="req-log hidden"></div>
                     </div>
                     <div class="req-action">
-                        <button class="req-btn hidden" id="btn-install-pmd"
-                            onclick="wizardInstallPmd()">⚡ Cài tự động</button>
+                        <button class="req-btn hidden" id="btn-install-pmd" onclick="wizardInstallPmd()">⚡ Cài tự động</button>
                     </div>
                 </div>
 
@@ -89,25 +78,21 @@
                         <div class="req-desc" id="req-iphone-desc">Đang tìm thiết bị...</div>
                     </div>
                     <div class="req-action">
-                        <button class="req-btn hidden" id="btn-refresh-iphone"
-                            onclick="wizardRefreshIphone()">↻ Kiểm tra lại</button>
+                        <button class="req-btn hidden" id="btn-refresh-iphone" onclick="wizardRefreshIphone()">↻ Kiểm tra lại</button>
                     </div>
                 </div>
-
             </div>
 
             <!-- Tips when iPhone not found -->
             <div id="wizard-iphone-tips" class="hidden">
-                <div class="tip-item">① Cắm cáp USB Lightning / USB-C từ iPhone vào máy tính</div>
-                <div class="tip-item">② Trên iPhone: bấm <strong>Trust</strong> khi được hỏi</div>
-                <div class="tip-item">③ iOS 16+: Bật <strong>Developer Mode</strong> trong Cài đặt → Quyền riêng tư</div>
-                <div class="tip-item">④ Chạy app với <strong>Run as Administrator</strong></div>
+                <div class="tip-item">① Cắm cáp USB Lightning / Type-C từ iPhone vào máy tính</div>
+                <div class="tip-item">② Mở khóa màn hình iPhone và bấm <strong>Trust (Tin cậy)</strong></div>
+                <div class="tip-item">③ iOS 16+: Bật <strong>Developer Mode</strong> trong Cài đặt → Quyền riêng tư & Bảo mật</div>
             </div>
 
             <!-- Continue button -->
-            <button id="btn-wizard-continue" class="wizard-continue-btn" disabled
-                onclick="wizardContinue()">
-                Tiếp tục →
+            <button id="btn-wizard-continue" class="wizard-continue-btn" disabled onclick="wizardContinue()">
+                Tiếp tục vào Bản đồ →
             </button>
             <div id="wizard-continue-hint">Cần Python và pymobiledevice3 để tiếp tục</div>
         </div>
@@ -121,23 +106,23 @@
                 <div class="setup-dots"><span></span><span></span><span></span><span></span></div>
                 <div class="setup-device">💻</div>
             </div>
-            <div id="setup-title">Đang thiết lập kết nối...</div>
+            <div id="setup-title">Đang kết nối iOS Userspace Tunnel...</div>
             <div id="setup-steps">
                 <div class="setup-step" id="step-device">
                     <span class="step-icon">○</span>
-                    <span class="step-label">Phát hiện thiết bị</span>
+                    <span class="step-label">Phát hiện iPhone</span>
                 </div>
                 <div class="setup-step" id="step-tunnel">
                     <span class="step-icon">○</span>
-                    <span class="step-label">Kết nối tunnel iOS</span>
+                    <span class="step-label">Khởi tạo Userspace Tunnel (No-Admin)</span>
                 </div>
                 <div class="setup-step" id="step-worker">
                     <span class="step-icon">○</span>
-                    <span class="step-label">Chuẩn bị dịch chuyển tức thì ⚡</span>
+                    <span class="step-label">Sẵn sàng dịch chuyển tức thì ⚡</span>
                 </div>
             </div>
-            <div id="setup-hint">Lần đầu có thể mất 15–30 giây. Các lần sau sẽ nhanh hơn.</div>
-            <button id="btn-skip-setup" onclick="skipSetup()">Bỏ qua, dùng chế độ thường</button>
+            <div id="setup-hint">Đang kết nối trực tiếp qua USB socket...</div>
+            <button id="btn-skip-setup" onclick="skipSetup()">Vào bản đồ ngay</button>
         </div>
     </div>
 
@@ -145,6 +130,22 @@
     <div id="layout" class="hidden">
         <!-- Sidebar -->
         <aside id="sidebar">
+            <!-- Mode Switcher Tabs -->
+            <div id="mode-tabs">
+                <button class="mode-tab active" data-mode="teleport" id="tab-teleport" title="Dịch chuyển tức thời">
+                    <span class="tab-icon">🚀</span>
+                    <span class="tab-title">Dịch chuyển</span>
+                </button>
+                <button class="mode-tab" data-mode="route" id="tab-route" title="Mô phỏng lộ trình đường đi">
+                    <span class="tab-icon">🛣️</span>
+                    <span class="tab-title">Tuyến đường</span>
+                </button>
+                <button class="mode-tab" data-mode="joystick" id="tab-joystick" title="Điều khiển tự do WASD">
+                    <span class="tab-icon">🕹️</span>
+                    <span class="tab-title">Joystick</span>
+                </button>
+            </div>
+
             <!-- Device section -->
             <section class="panel" id="panel-device">
                 <div class="panel-header">
@@ -152,7 +153,7 @@
                     <span class="panel-title">Thiết bị</span>
                     <div style="display: flex; gap: 4px;">
                         <button id="btn-open-wifi" class="icon-btn" title="Quét Wi-Fi" onclick="document.getElementById('wifi-modal').classList.remove('hidden')">📡</button>
-                        <button id="btn-refresh" class="icon-btn" title="Làm mới">↻</button>
+                        <button id="btn-refresh" class="icon-btn" title="Làm mới thiết bị">↻</button>
                     </div>
                 </div>
                 <div id="device-status" class="status-row">
@@ -163,34 +164,174 @@
                 <select id="device-select" class="select-box hidden">
                     <option value="">-- Chọn thiết bị --</option>
                 </select>
-                <div id="tunnel-badge" class="tunnel-badge tunnel-idle">○ Tunnel chưa kết nối</div>
+                <div id="tunnel-badge" class="tunnel-badge tunnel-idle">○ Userspace Tunnel sẵn sàng</div>
+
+                <!-- Reset location button -->
+                <button id="btn-reset-gps" class="btn-reset-gps" title="Khôi phục lại định vị GPS thực tế">
+                    <span class="btn-icon">🔄</span> Đặt lại vị trí thật (Reset GPS)
+                </button>
             </section>
 
-            <!-- Selected location -->
-            <section class="panel" id="panel-location">
-                <div class="panel-header">
-                    <span class="panel-icon">🎯</span>
-                    <span class="panel-title">Vị trí đã chọn</span>
-                </div>
-                <div id="coord-display">
-                    <div class="coord-row">
-                        <span class="coord-lbl">Vĩ độ</span>
-                        <span class="coord-val" id="disp-lat">—</span>
+            <!-- ─── TAB 1: TELEPORT PANEL ─── -->
+            <div id="panel-tab-teleport" class="mode-content">
+                <section class="panel" id="panel-location">
+                    <div class="panel-header">
+                        <span class="panel-icon">🎯</span>
+                        <span class="panel-title">Vị trí đã chọn</span>
                     </div>
-                    <div class="coord-row">
-                        <span class="coord-lbl">Kinh độ</span>
-                        <span class="coord-val" id="disp-lng">—</span>
+                    <div id="coord-display">
+                        <div class="coord-row">
+                            <span class="coord-lbl">Vĩ độ (Lat)</span>
+                            <span class="coord-val" id="disp-lat">—</span>
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-lbl">Kinh độ (Lng)</span>
+                            <span class="coord-val" id="disp-lng">—</span>
+                        </div>
+                        <div class="coord-row" id="place-row" style="display:none">
+                            <span class="coord-lbl">Địa điểm</span>
+                            <span class="coord-val" id="disp-place" style="font-size:11px;white-space:normal;line-height:1.4">—</span>
+                        </div>
                     </div>
-                    <div class="coord-row" id="place-row" style="display:none">
-                        <span class="coord-lbl">Địa điểm</span>
-                        <span class="coord-val" id="disp-place"
-                            style="font-size:11px;white-space:normal;line-height:1.4">—</span>
-                    </div>
-                </div>
 
-                <button id="btn-teleport" class="btn-primary" disabled>
-                    <span class="btn-icon">🚀</span> Dịch chuyển
-                </button>
+                    <!-- Quick Coordinate Input Box -->
+                    <div class="coord-input-box">
+                        <div class="coord-lbl" style="margin-bottom: 5px;">Nhập tọa độ nhanh (DMS / Thập phân):</div>
+                        <div class="coord-input-row">
+                            <input type="text" id="coord-quick-input" placeholder="21°01'56.3&quot;N 105°50'08.4&quot;E" spellcheck="false" autocomplete="off">
+                            <button id="btn-coord-quick-go" class="btn-coord-go" title="Dịch chuyển tức thì">Đi ➔</button>
+                        </div>
+                    </div>
+
+                    <!-- Cooldown Calculator Box -->
+                    <div id="cooldown-box" class="cooldown-box hidden">
+                        <div class="cooldown-header">
+                            <span>⏱️ Thời gian chờ an toàn (Cooldown):</span>
+                            <span id="cooldown-val" class="cooldown-val">0 phút</span>
+                        </div>
+                        <div class="cooldown-desc" id="cooldown-dist">Khoảng cách: 0 km</div>
+                    </div>
+
+                    <button id="btn-teleport" class="btn-primary" disabled>
+                        <span class="btn-icon">🚀</span> Dịch chuyển vị trí
+                    </button>
+                    <button id="btn-save-fav" class="btn-secondary" disabled>
+                        <span class="btn-icon">⭐</span> Lưu vào Yêu thích
+                    </button>
+                </section>
+            </div>
+
+            <!-- ─── TAB 2: ROUTE NAVIGATION PANEL ─── -->
+            <div id="panel-tab-route" class="mode-content hidden">
+                <section class="panel" id="panel-route">
+                    <div class="panel-header">
+                        <span class="panel-icon">🛣️</span>
+                        <span class="panel-title">Mô phỏng lộ trình</span>
+                        <button id="btn-clear-route" class="icon-btn" title="Xóa tuyến đường">✕</button>
+                    </div>
+
+                    <div class="route-hint" id="route-hint">
+                        Nhấp 2 điểm trên bản đồ để tạo điểm xuất phát (A) và điểm đến (B).
+                    </div>
+
+                    <div id="route-info-box" class="coord-display hidden">
+                        <div class="coord-row">
+                            <span class="coord-lbl">Quãng đường</span>
+                            <span class="coord-val" id="route-dist">— km</span>
+                        </div>
+                        <div class="coord-row">
+                            <span class="coord-lbl">Thời gian ước tính</span>
+                            <span class="coord-val" id="route-time">—</span>
+                        </div>
+                    </div>
+
+                    <!-- Speed controller -->
+                    <div class="speed-control-panel">
+                        <div class="speed-header">
+                            <span class="coord-lbl">Tốc độ di chuyển:</span>
+                            <span id="speed-display" class="speed-val">15 km/h</span>
+                        </div>
+                        <input type="range" id="speed-slider" min="1" max="100" value="15" class="speed-slider">
+                        
+                        <div class="speed-presets">
+                            <button class="preset-btn" data-speed="3.6" title="Đi bộ">🚶 3.6</button>
+                            <button class="preset-btn active" data-speed="15" title="Xe đạp">🚲 15</button>
+                            <button class="preset-btn" data-speed="45" title="Xe máy">🛵 45</button>
+                            <button class="preset-btn" data-speed="80" title="Ô tô">🚗 80</button>
+                        </div>
+
+                        <label class="jitter-toggle">
+                            <input type="checkbox" id="check-speed-jitter" checked>
+                            <span>🎲 Biến thiên tốc độ tự nhiên (Anti-ban)</span>
+                        </label>
+                    </div>
+
+                    <!-- Route Action Buttons -->
+                    <div class="route-actions">
+                        <button id="btn-route-start" class="btn-primary" disabled>
+                            <span class="btn-icon">▶</span> Bắt đầu di chuyển
+                        </button>
+                        <div style="display: flex; gap: 6px;">
+                            <button id="btn-route-pause" class="btn-secondary hidden" style="flex:1;">
+                                <span class="btn-icon">⏸</span> Tạm dừng
+                            </button>
+                            <button id="btn-route-stop" class="btn-danger hidden" style="flex:1;">
+                                <span class="btn-icon">⏹</span> Dừng hẳn
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ─── TAB 3: JOYSTICK PANEL ─── -->
+            <div id="panel-tab-joystick" class="mode-content hidden">
+                <section class="panel" id="panel-joystick">
+                    <div class="panel-header">
+                        <span class="panel-icon">🕹️</span>
+                        <span class="panel-title">Bàn phím & Cần điều khiển</span>
+                    </div>
+
+                    <div class="joystick-hint">
+                        Sử dụng cụm phím <strong>W - A - S - D</strong> hoặc <strong>Phím Mũi Tên</strong> để điều hướng iPhone.
+                    </div>
+
+                    <!-- Speed selector for joystick -->
+                    <div class="speed-control-panel">
+                        <div class="speed-header">
+                            <span class="coord-lbl">Tốc độ bước đi:</span>
+                            <span id="joy-speed-display" class="speed-val">5 km/h</span>
+                        </div>
+                        <div class="speed-presets">
+                            <button class="joy-preset-btn active" data-speed="3.6">🚶 Đi bộ</button>
+                            <button class="joy-preset-btn" data-speed="12">🏃 Chạy</button>
+                            <button class="joy-preset-btn" data-speed="30">🚴 Nhanh</button>
+                        </div>
+                    </div>
+
+                    <!-- Visual D-Pad -->
+                    <div class="dpad-wrapper">
+                        <div class="dpad">
+                            <button class="dpad-btn dpad-up" id="btn-joy-up" title="Tiến (W)">▲</button>
+                            <div class="dpad-mid">
+                                <button class="dpad-btn dpad-left" id="btn-joy-left" title="Trái (A)">◀</button>
+                                <div class="dpad-center">🕹️</div>
+                                <button class="dpad-btn dpad-right" id="btn-joy-right" title="Phải (D)">▶</button>
+                            </div>
+                            <button class="dpad-btn dpad-down" id="btn-joy-down" title="Lùi (S)">▼</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Saved Favorites -->
+            <section class="panel" id="panel-favorites">
+                <div class="panel-header">
+                    <span class="panel-icon">⭐</span>
+                    <span class="panel-title">Địa điểm yêu thích</span>
+                </div>
+                <div id="favorites-list">
+                    <div class="empty-hint">Chưa lưu địa điểm nào</div>
+                </div>
             </section>
 
             <!-- History -->
@@ -207,13 +348,14 @@
 
             <!-- Re-setup button at bottom -->
             <div id="sidebar-footer">
-                <button class="link-btn" onclick="showWizard()">⚙ Cài đặt lại</button>
+                <button class="link-btn" onclick="showWizard()">⚙ Cài đặt lại / Kiểm tra</button>
             </div>
         </aside>
 
         <!-- Map container -->
         <div id="map-container">
             <div id="map"></div>
+            
             <!-- Overlay status (for slow path teleport) -->
             <div id="map-overlay" class="hidden">
                 <div id="overlay-content">
@@ -221,22 +363,30 @@
                     <div id="overlay-text">Đang dịch chuyển...</div>
                 </div>
             </div>
+
             <!-- Search bar -->
             <div id="search-bar">
-                <input type="text" id="search-input" placeholder="🔍 Tìm địa điểm tại Việt Nam..." autocomplete="off">
+                <input type="text" id="search-input" placeholder="🔍 Nhập địa điểm, tên đường hoặc dán tọa độ (21°01'56.3&quot;N 105°50'08.4&quot;E)..." autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
                 <div id="search-results" class="hidden"></div>
             </div>
 
             <!-- Custom Layer Toggle -->
             <div id="layer-toggle">
-                <button class="layer-btn active" id="btn-layer-street">🗺️ Đường phố</button>
-                <button class="layer-btn" id="btn-layer-satellite">🌍 Vệ tinh</button>
+                <button class="layer-btn active" id="btn-layer-google-hybrid" title="Vệ tinh Google Maps độ nét cao kèm tên đường tiếng Việt">🌍 Vệ tinh (Google)</button>
+                <button class="layer-btn" id="btn-layer-google-street" title="Bản đồ đường phố Google Maps chuẩn">🗺️ Đường phố (Google)</button>
+                <button class="layer-btn" id="btn-layer-osm" title="Bản đồ OpenStreetMap">🌐 OpenStreetMap</button>
             </div>
 
             <!-- Map tip -->
             <div id="map-tip">Click vào bản đồ để chọn vị trí</div>
-            <!-- Toast -->
+            <!-- Toast notification -->
             <div id="toast"></div>
+
+            <!-- Floating Current Speed Badge when routing -->
+            <div id="floating-route-status" class="floating-badge hidden">
+                <span class="pulse-dot"></span>
+                <span id="floating-route-text">Đang di chuyển: 15 km/h</span>
+            </div>
 
             <!-- WiFi Modal -->
             <div id="wifi-modal" class="hidden">
