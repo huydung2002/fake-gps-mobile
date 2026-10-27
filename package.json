@@ -1,6 +1,6 @@
 {
   "name": "ios-gps-by-bravehoang",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "IOS GPS Location by BraveHoang",
   "main": "main.js",
   "scripts": {
@@ -35,8 +35,18 @@
     "files": [
       "main.js",
       "preload.js",
+      "location_worker.py",
       "renderer/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "location_worker.py"
+    ],
+    "extraResources": [
+      {
+        "from": "location_worker.py",
+        "to": "location_worker.py"
+      }
     ],
     "asar": true,
     "win": {

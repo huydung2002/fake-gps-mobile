@@ -7,7 +7,8 @@ const execAsync = promisify(exec);
 
 function logDebug(msg) {
     try {
-        fs.appendFileSync(path.join(__dirname, 'gps_debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
+        const baseDir = (app && app.isPackaged) ? app.getPath('userData') : __dirname;
+        fs.appendFileSync(path.join(baseDir, 'gps_debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
     } catch (e) {}
 }
 
@@ -93,6 +94,21 @@ function teardownLocationWorker() {
     logDebug('Location worker torn down.');
 }
 
+function getLocationWorkerScriptPath() {
+    // 1. Unpacked asar path
+    const unpacked = path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'location_worker.py');
+    if (fs.existsSync(unpacked)) return unpacked;
+
+    // 2. ExtraResources path
+    if (process.resourcesPath) {
+        const resPath = path.join(process.resourcesPath, 'location_worker.py');
+        if (fs.existsSync(resPath)) return resPath;
+    }
+
+    // 3. Dev direct path
+    return path.join(__dirname, 'location_worker.py');
+}
+
 function startLocationWorker(py, target, port) {
     if (lWorker.failCount >= 5) {
         logDebug('Worker disabled after repeated failures.');
@@ -101,7 +117,7 @@ function startLocationWorker(py, target, port) {
     teardownLocationWorker();
     lWorker.status = 'starting';
     lWorker.udid = (!port && target && target !== 'auto') ? target : null;
-    const script = path.join(__dirname, 'location_worker.py');
+    const script = getLocationWorkerScriptPath();
     const args = [script];
     if (target && target !== 'auto') args.push(String(target));
     if (port) args.push(String(port));
